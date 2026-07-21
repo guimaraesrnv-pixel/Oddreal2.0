@@ -15,8 +15,20 @@ Versão: 2.0
 # ======================================================
 
 from .cache import (
+
     CacheManager,
+
     cache_manager
+
+)
+
+
+from .api_client import (
+
+    APIClient,
+
+    api_client
+
 )
 
 
@@ -26,6 +38,7 @@ from .cache import (
 # ======================================================
 
 __version__ = "2.0"
+
 
 __author__ = "OddReal"
 
@@ -39,6 +52,10 @@ __all__ = [
 
     "CacheManager",
 
-    "cache_manager"
+    "cache_manager",
+
+    "APIClient",
+
+    "api_client"
 
 ]
