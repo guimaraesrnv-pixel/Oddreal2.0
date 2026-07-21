@@ -4,15 +4,43 @@ OddReal 2.0
 Pacote:
 core
 
-Camada central de integração do sistema.
+Camada central de integração.
 
 Responsável por:
-- Orquestração dos módulos
-- Fluxo de análise
-- Integração entre serviços e engine
+- Orquestração
+- Pipeline
+- Análises
 
 Versão: 2.0
 """
+
+
+# ======================================================
+# ANALYZER
+# ======================================================
+
+from .analyzer import (
+
+    Analyzer,
+
+    analyzer
+
+)
+
+
+
+# ======================================================
+# PIPELINE
+# ======================================================
+
+from .pipeline import (
+
+    Pipeline,
+
+    pipeline
+
+)
+
 
 
 # ======================================================
@@ -20,6 +48,7 @@ Versão: 2.0
 # ======================================================
 
 __version__ = "2.0"
+
 
 __author__ = "OddReal"
 
@@ -29,4 +58,14 @@ __author__ = "OddReal"
 # EXPORTS PÚBLICOS
 # ======================================================
 
-__all__ = []
+__all__ = [
+
+    "Analyzer",
+
+    "analyzer",
+
+    "Pipeline",
+
+    "pipeline"
+
+]
