@@ -2,42 +2,59 @@
 OddReal 2.0
 
 Pacote:
-config
+oddsengine
 
-Configurações centrais do sistema.
+Motor principal de análise de odds.
 
 Responsável por:
-- Configurações gerais
-- Configurações da API
-- Parâmetros globais
+- Cálculos
+- Mercados
+- Value Bets
+- Probabilidades
 
 Versão: 2.0
 """
 
 
 # ======================================================
-# SETTINGS
+# IMPORTAÇÕES DO MOTOR
 # ======================================================
 
-from .settings import (
+from .odds import (
 
-    Settings,
+    OddsEngine,
 
-    settings
+    odds_engine
 
 )
 
 
 
-# ======================================================
-# API CONFIG
-# ======================================================
+from .calculator import (
 
-from .api import (
+    OddsCalculator,
 
-    APIConfig,
+    odds_calculator
 
-    api_config
+)
+
+
+
+from .markets import (
+
+    MarketAnalyzer,
+
+    market_analyzer
+
+)
+
+
+
+from .value import (
+
+    ValueEngine,
+
+    value_engine
 
 )
 
@@ -60,12 +77,20 @@ __author__ = "OddReal"
 
 __all__ = [
 
-    "Settings",
+    "OddsEngine",
 
-    "settings",
+    "odds_engine",
 
-    "APIConfig",
+    "OddsCalculator",
 
-    "api_config"
+    "odds_calculator",
+
+    "MarketAnalyzer",
+
+    "market_analyzer",
+
+    "ValueEngine",
+
+    "value_engine"
 
 ]
