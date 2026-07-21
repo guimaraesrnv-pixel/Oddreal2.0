@@ -4,14 +4,19 @@ OddReal 2.0
 Pacote:
 services
 
-Serviços auxiliares do sistema.
+Camada de serviços do sistema.
+
+Responsável por:
+- API
+- Cache
+- Processamento de dados
 
 Versão: 2.0
 """
 
 
 # ======================================================
-# IMPORTAÇÃO DOS SERVIÇOS
+# CACHE
 # ======================================================
 
 from .cache import (
@@ -23,11 +28,30 @@ from .cache import (
 )
 
 
+
+# ======================================================
+# API CLIENT
+# ======================================================
+
 from .api_client import (
 
     APIClient,
 
     api_client
+
+)
+
+
+
+# ======================================================
+# DATA PROCESSOR
+# ======================================================
+
+from .data_processor import (
+
+    DataProcessor,
+
+    data_processor
 
 )
 
@@ -56,6 +80,10 @@ __all__ = [
 
     "APIClient",
 
-    "api_client"
+    "api_client",
+
+    "DataProcessor",
+
+    "data_processor"
 
 ]
