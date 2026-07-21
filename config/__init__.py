@@ -6,12 +6,17 @@ config
 
 Configurações centrais do sistema.
 
+Responsável por:
+- Configurações gerais
+- Configurações da API
+- Parâmetros globais
+
 Versão: 2.0
 """
 
 
 # ======================================================
-# IMPORTAÇÕES
+# SETTINGS
 # ======================================================
 
 from .settings import (
@@ -22,6 +27,11 @@ from .settings import (
 
 )
 
+
+
+# ======================================================
+# API CONFIG
+# ======================================================
 
 from .api import (
 
