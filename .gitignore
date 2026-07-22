@@ -1,1 +1,42 @@
+# Ambiente virtual
+venv/
+.venv/
+env/
 
+# Variáveis de ambiente
+.env
+
+# Cache do Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Cache do Streamlit
+.streamlit/
+
+# Arquivos de log
+logs/
+*.log
+
+# Dados temporários
+data/cache/
+data/temp/
+
+# Arquivos do sistema
+.DS_Store
+Thumbs.db
+
+# Configurações do VS Code
+.vscode/
+
+# Configurações do PyCharm
+.idea/
+
+# Arquivos de teste
+.pytest_cache/
+
+# Distribuição
+build/
+dist/
+*.egg-info/
