@@ -1,318 +1,78 @@
 """
 OddReal 2.0
 
-Arquivo:
-app/main.py
-
-Entrada principal do Streamlit.
-
-Responsável por:
-- Inicializar aplicação
-- Carregar configurações
-- Conectar módulos
-
-Versão: 2.0
+Aplicação principal.
 """
-
 
 import streamlit as st
 
+from config.config import Config
 
-from config import (
+from services.api import OddsAPI
 
-    settings,
+from core.analyzer import Analyzer
 
-    api_config
+from app.dashboard import dashboard
 
-)
-
-
-from core import (
-
-    pipeline,
-
-    analyzer
-
-)
+from database.storage import Storage
 
 
+storage = Storage()
 
-# ======================================================
-# CONFIGURAÇÃO DA PÁGINA
-# ======================================================
+api = OddsAPI()
 
-st.set_page_config(
-
-    page_title="OddReal 2.0",
-
-    page_icon="⚽",
-
-    layout="wide"
-
-)
+analyzer = Analyzer()
 
 
-
-# ======================================================
-# INICIALIZAÇÃO
-# ======================================================
-
-def initialize():
-
+def load_data():
     """
-    Inicializa o sistema.
+    Carrega dados da API.
     """
 
-    return {
+    try:
 
-        "settings":
+        events = api.get_events()
 
-            settings,
+        return events
 
+    except Exception as error:
 
-        "api":
+        st.error(f"Erro: {error}")
 
-            api_config,
+        return []
+        def process(events):
+    """
+    Processa análises.
+    """
 
+    analyses = []
 
-        "pipeline":
+    for event in events:
 
-            pipeline,
+        result = analyzer.analyze(event)
 
+        analyses.append(result)
 
-        "analyzer":
+        storage.save(result)
 
-            analyzer
+    return analyses
+    def main():
 
-    }
+    dashboard.configure_page()
 
+    events = load_data()
 
+    results = process(events)
 
-# Carregar sistema
+    dashboard.render({
 
-system = initialize()
+        "events": len(events),
 
+        "results": results
 
+    })
 
-# ======================================================
-# CABEÇALHO
-# ======================================================
 
-st.title(
-    "⚽ OddReal 2.0"
-)
+if __name__ == "__main__":
 
-
-st.caption(
-    "Sistema profissional de análise de odds e value bets"
-)
-# ======================================================
-# SIDEBAR
-# ======================================================
-
-with st.sidebar:
-
-    st.header(
-        "⚙️ Configurações"
-    )
-
-
-    st.write(
-        "Versão:",
-        settings.version
-    )
-
-
-    st.write(
-        "Ambiente:",
-        settings.environment
-    )
-
-
-    st.divider()
-
-
-    st.subheader(
-        "API"
-    )
-
-
-    api_status = api_config.status()
-
-
-    if api_status["configured"]:
-
-        st.success(
-            "API configurada"
-        )
-
-    else:
-
-        st.warning(
-            "API Key não configurada"
-        )
-
-
-
-# ======================================================
-# STATUS DO SISTEMA
-# ======================================================
-
-st.subheader(
-    "📊 Status do Sistema"
-)
-
-
-col1, col2, col3 = st.columns(3)
-
-
-
-with col1:
-
-    st.metric(
-
-        "Config",
-
-        "OK"
-
-    )
-
-
-
-with col2:
-
-    st.metric(
-
-        "Pipeline",
-
-        "Ativo"
-
-    )
-
-
-
-with col3:
-
-    st.metric(
-
-        "Engine",
-
-        "Online"
-
-    )
-
-
-
-# ======================================================
-# ÁREA PRINCIPAL
-# ======================================================
-
-st.divider()
-
-
-st.subheader(
-    "🔎 Análise de Jogos"
-)
-
-
-sport = st.selectbox(
-
-    "Escolha o esporte",
-
-    [
-
-        "soccer",
-
-        "basketball",
-
-        "tennis"
-
-    ]
-  
-
-)
-# ======================================================
-# EXECUTAR ANÁLISE
-# ======================================================
-
-if st.button(
-    "🚀 Executar análise"
-):
-
-    with st.spinner(
-        "Analisando jogos..."
-    ):
-
-        try:
-
-            result = pipeline.run(
-
-                sport,
-
-                system["api"],
-
-                __import__(
-                    "services",
-                    fromlist=[
-                        "data_processor"
-                    ]
-                ).data_processor,
-
-                system["analyzer"],
-
-                __import__(
-                    "oddsengine",
-                    fromlist=[
-                        "odds_engine"
-                    ]
-                ).odds_engine
-
-            )
-
-
-            st.success(
-                "Análise concluída"
-            )
-
-
-            st.write(
-                "Eventos encontrados:",
-                result.get(
-                    "events",
-                    0
-                )
-            )
-
-
-            st.subheader(
-                "Resultados"
-            )
-
-
-            st.json(
-                result.get(
-                    "results",
-                    []
-                )
-            )
-
-
-
-        except Exception as error:
-
-            st.error(
-                f"Erro na análise: {error}"
-            )
-
-
-
-# ======================================================
-# RODAPÉ
-# ======================================================
-
-st.divider()
-
-
-st.caption(
-    "OddReal 2.0 © Sistema inteligente de análise de odds"
-)
+    main()
