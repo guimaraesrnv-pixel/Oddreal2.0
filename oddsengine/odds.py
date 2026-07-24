@@ -65,6 +65,7 @@ class OddsEngine:
             return "Média"
 
         return "Baixa"
+        
     def risk_level(
         self,
         probability: float,
@@ -93,7 +94,7 @@ class OddsEngine:
 
             odd = bookmaker.get("odd")
 
-            if odd:
+            if odd is not None:
                 odds.append(odd)
 
         if not odds:
@@ -114,6 +115,7 @@ class OddsEngine:
             ((best_odd - average_odd) / average_odd) * 100,
             2
         )
+        
     def analyze_event(
         self,
         event: Dict
