@@ -1,4 +1,13 @@
+"""
+OddReal 2.0
+Aplicação Principal
+"""
+
+from __future__ import annotations
+
 import streamlit as st
+
+from core.pipeline import pipeline
 
 from Pages import (
     home,
@@ -13,18 +22,83 @@ st.set_page_config(
     layout="wide"
 )
 
-PAGES = {
-    "🏠 Dashboard": home,
-    "📈 Análises": analysis,
-    "💎 Value Bets": valuebets,
-    "⚙️ Configurações": settings,
-}
+# ==========================================
+# Carrega os dados do sistema
+# ==========================================
+
+data = pipeline.execute()
+
+# ==========================================
+# Sidebar
+# ==========================================
+
+st.sidebar.image(
+    "assets/logo.png",
+    use_container_width=True
+)
 
 st.sidebar.title("OddReal 2.0")
 
 page = st.sidebar.radio(
-    "Navegação",
-    list(PAGES.keys())
+
+    "Menu",
+
+    [
+
+        "Dashboard",
+
+        "Análises",
+
+        "Value Bets",
+
+        "Configurações"
+
+    ]
+
 )
 
-PAGES[page].render()
+# ==========================================
+# Navegação
+# ==========================================
+
+if page == "Dashboard":
+
+    home.render(
+
+        total_events=data["total_events"],
+
+        total_valuebets=data["total_value_bets"],
+
+        confidence=80,
+
+        best_ev=12,
+
+        last_update="Agora"
+
+    )
+
+elif page == "Análises":
+
+    if data["analyses"]:
+
+        analysis.render(
+
+            data["analyses"][0]
+
+        )
+
+    else:
+
+        analysis.render()
+
+elif page == "Value Bets":
+
+    valuebets.render(
+
+        data["value_bets"]
+
+    )
+
+elif page == "Configurações":
+
+    settings.render()
