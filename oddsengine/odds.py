@@ -65,7 +65,55 @@ class OddsEngine:
             return "Média"
 
         return "Baixa"
+    def risk_level(
+        self,
+        probability: float,
+        ev: float
+    ) -> str:
 
+        if probability >= 75 and ev >= 10:
+            return "Baixo"
+
+        if probability >= 60 and ev >= 5:
+            return "Moderado"
+
+        return "Alto"
+
+    def market_consensus(
+        self,
+        bookmakers: list
+    ) -> float:
+
+        if not bookmakers:
+            return 0.0
+
+        odds = []
+
+        for bookmaker in bookmakers:
+
+            odd = bookmaker.get("odd")
+
+            if odd:
+                odds.append(odd)
+
+        if not odds:
+            return 0.0
+
+        return round(sum(odds) / len(odds), 2)
+
+    def market_variation(
+        self,
+        best_odd: float,
+        average_odd: float
+    ) -> float:
+
+        if average_odd == 0:
+            return 0
+
+        return round(
+            ((best_odd - average_odd) / average_odd) * 100,
+            2
+        )
     def analyze_event(
         self,
         event: Dict
@@ -89,7 +137,19 @@ class OddsEngine:
             probability,
             ev
         )
+        average_odd = self.market_consensus(
+            event.get("bookmakers", [])
+        )
 
+        variation = self.market_variation(
+            odd,
+            average_odd
+        )
+
+        risk = self.risk_level(
+            probability,
+            ev
+        )
         return {
 
             **event,
@@ -102,7 +162,11 @@ class OddsEngine:
 
             "confidence_level":
                 self.confidence_level(index),
+            "average_odd": average_odd,
 
+            "market_variation": variation,
+
+            "risk": risk,
             "is_value_bet":
                 ev > 5
 
