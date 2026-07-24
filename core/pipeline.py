@@ -3,41 +3,48 @@ OddReal 2.0
 Pipeline Principal
 """
 
-from services.api_client import OddsAPIClient
-from core.analyzer import Analyzer
+from __future__ import annotations
+
+from typing import Dict
+
+from services.api_client import api_client
+from core.analyzer import analyzer
+from modules.logger import info
 
 
 class Pipeline:
 
     def __init__(self):
 
-        self.api = OddsAPIClient()
-        self.analyzer = Analyzer()
+        info("Pipeline iniciado.")
 
-    def run(self):
+    def execute(self) -> Dict:
 
-        events = self.api.get_events()
+        events = api_client.get_events()
 
-        if not events:
-            return {
-                "events": [],
-                "analysis": [],
-                "value_bets": []
-            }
+        analyses = analyzer.analyze(events)
 
-        analysis = self.analyzer.analyze(events)
+        value_bets = analyzer.value_bets(
+            analyses
+        )
+
+        best_match = analyzer.best_opportunity(
+            analyses
+        )
 
         return {
 
             "events": events,
 
-            "analysis": analysis,
+            "analyses": analyses,
 
-            "value_bets": [
-                item
-                for item in analysis
-                if item.get("is_value_bet", False)
-            ]
+            "value_bets": value_bets,
+
+            "best_match": best_match,
+
+            "total_events": len(events),
+
+            "total_value_bets": len(value_bets)
 
         }
 
