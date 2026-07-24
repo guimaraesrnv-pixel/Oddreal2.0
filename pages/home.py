@@ -1,33 +1,44 @@
-
 import streamlit as st
 
 
-def render():
-    """
-    Página inicial do OddReal.
-    """
-
+def render(
+    total_events=0,
+    total_valuebets=0,
+    confidence=0,
+    best_ev=0,
+    last_update="--:--"
+):
     st.title("⚽ OddReal 2.0")
+    st.caption("Central Inteligente de Análise Esportiva")
 
-    st.subheader("Bem-vindo!")
+    c1, c2, c3, c4 = st.columns(4)
 
-    st.write(
-        """
-        O OddReal é uma plataforma de análise inteligente
-        de apostas esportivas.
+    c1.metric("⚽ Jogos", total_events)
+    c2.metric("💎 Value Bets", total_valuebets)
+    c3.metric("🎯 Confiança Média", f"{confidence}%")
+    c4.metric("🔥 Melhor EV", f"{best_ev}%")
 
-        Utilize o menu lateral para navegar entre as
-        funcionalidades do sistema.
-        """
+    st.divider()
+
+    st.subheader("📊 Radar OddReal")
+
+    st.info(
+        "Os jogos com maior Índice OddReal aparecerão aqui "
+        "automaticamente após a análise."
     )
 
-    col1, col2, col3 = st.columns(3)
+    st.divider()
 
-    with col1:
-        st.metric("Eventos", "0")
+    st.subheader("💎 Oportunidades do Dia")
 
-    with col2:
-        st.metric("Value Bets", "0")
+    st.write(
+        "Nenhuma oportunidade disponível no momento."
+    )
 
-    with col3:
-        st.metric("ROI", "0%")
+    st.divider()
+
+    st.subheader("🚨 Alertas")
+
+    st.success("Sistema funcionando normalmente.")
+
+    st.caption(f"Última atualização: {last_update}")
