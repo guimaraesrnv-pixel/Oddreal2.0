@@ -951,8 +951,7 @@ elif st.session_state[
                 )
 
                 options.append(
-                    f"{i + 1}. "
-                    f"{home} × {away}"
+                    f"{i + 1}. {home} × {away}"
                 )
 
             selected = st.selectbox(
@@ -967,6 +966,16 @@ elif st.session_state[
             selected_analysis = analyses[
                 selected_index
             ]
+
+            st.markdown(
+                "### Evento selecionado"
+            )
+
+            st.info(
+                f"{selected_analysis.get('home_team', 'Mandante')} "
+                f"× "
+                f"{selected_analysis.get('away_team', 'Visitante')}"
+            )
 
             if st.button(
                 "🤖 Analisar com IA",
@@ -999,4 +1008,199 @@ elif st.session_state[
                 ) == "success":
 
                     indicators = ai_result.get(
-     
+                        "indicators",
+                        {},
+                    )
+
+                    st.markdown(
+                        '<div class="section-title">Diagnóstico técnico</div>',
+                        unsafe_allow_html=True,
+                    )
+
+                    col1, col2, col3, col4 = st.columns(
+                        4
+                    )
+
+                    with col1:
+
+                        st.metric(
+                            "Odd",
+                            money_or_number(
+                                indicators.get(
+                                    "odd"
+                                )
+                            ),
+                        )
+
+                    with col2:
+
+                        st.metric(
+                            "EV",
+                            percentage(
+                                indicators.get(
+                                    "expected_value"
+                                )
+                            ),
+                        )
+
+                    with col3:
+
+                        st.metric(
+                            "Índice OddReal",
+                            indicators.get(
+                                "oddreal_index",
+                                0,
+                            ),
+                        )
+
+                    with col4:
+
+                        st.metric(
+                            "Risco",
+                            indicators.get(
+                                "risk",
+                                "Alto",
+                            ),
+                        )
+
+                    st.markdown(
+                        "### 📊 Indicadores completos"
+                    )
+
+                    indicator_col1, indicator_col2 = st.columns(
+                        2
+                    )
+
+                    with indicator_col1:
+
+                        st.write(
+                            "**Probabilidade:** "
+                            + percentage(
+                                indicators.get(
+                                    "probability"
+                                )
+                            )
+                        )
+
+                        st.write(
+                            "**Confiança:** "
+                            + str(
+                                indicators.get(
+                                    "confidence_level",
+                                    "Não informado",
+                                )
+                            )
+                        )
+
+                        st.write(
+                            "**Odd média do mercado:** "
+                            + money_or_number(
+                                indicators.get(
+                                    "average_odd"
+                                )
+                            )
+                        )
+
+                    with indicator_col2:
+
+                        st.write(
+                            "**Variação de mercado:** "
+                            + percentage(
+                                indicators.get(
+                                    "market_variation"
+                                )
+                            )
+                        )
+
+                        st.write(
+                            "**Value Bet:** "
+                            + (
+                                "Sim"
+                                if indicators.get(
+                                    "is_value_bet",
+                                    False,
+                                )
+                                else "Não"
+                            )
+                        )
+
+                        st.write(
+                            "**Nível de risco:** "
+                            + str(
+                                indicators.get(
+                                    "risk",
+                                    "Alto",
+                                )
+                            )
+                        )
+
+                    st.markdown(
+                        "### ✅ Pontos favoráveis"
+                    )
+
+                    strengths = ai_result.get(
+                        "strengths",
+                        [],
+                    )
+
+                    if strengths:
+
+                        for strength in strengths:
+
+                            st.success(
+                                strength
+                            )
+
+                    else:
+
+                        st.write(
+                            "Nenhum ponto favorável identificado."
+                        )
+
+                    st.markdown(
+                        "### ⚠️ Pontos de atenção"
+                    )
+
+                    warnings = ai_result.get(
+                        "warnings",
+                        [],
+                    )
+
+                    if warnings:
+
+                        for warning in warnings:
+
+                            st.warning(
+                                warning
+                            )
+
+                    else:
+
+                        st.write(
+                            "Nenhum alerta adicional."
+                        )
+
+                    st.markdown(
+                        "### 🧠 Conclusão da IA"
+                    )
+
+                    st.info(
+                        ai_result.get(
+                            "conclusion",
+                            "Sem conclusão disponível.",
+                        )
+                    )
+
+                    st.caption(
+                        "A análise da IA é interpretativa. "
+                        "Ela não representa garantia de resultado."
+                    )
+
+                else:
+
+                    st.warning(
+                        ai_result.get(
+                            "message",
+                            "A IA não conseguiu gerar uma análise.",
+                        )
+                    )
