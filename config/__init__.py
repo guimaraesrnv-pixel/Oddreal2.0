@@ -1,6 +1,6 @@
 """
 OddReal 2.0
-Pacote de configuração.
+Pacote central de configuração.
 """
 
 from .settings import (
