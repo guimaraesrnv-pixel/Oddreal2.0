@@ -14,19 +14,14 @@ Responsável por:
 Versão: 2.0
 """
 
-
 # ======================================================
 # CACHE
 # ======================================================
 
 from .cache import (
-
     CacheManager,
-
-    cache_manager
-
+    cache_manager,
 )
-
 
 
 # ======================================================
@@ -34,13 +29,9 @@ from .cache import (
 # ======================================================
 
 from .api_client import (
-
-    APIClient,
-
-    api_client
-
+    OddsAPIClient,
+    api_client,
 )
-
 
 
 # ======================================================
@@ -48,13 +39,9 @@ from .api_client import (
 # ======================================================
 
 from .data_processor import (
-
     DataProcessor,
-
-    data_processor
-
+    data_processor,
 )
-
 
 
 # ======================================================
@@ -63,27 +50,14 @@ from .data_processor import (
 
 __version__ = "2.0"
 
-
 __author__ = "OddReal"
 
 
-
-# ======================================================
-# EXPORTS PÚBLICOS
-# ======================================================
-
 __all__ = [
-
     "CacheManager",
-
     "cache_manager",
-
-    "APIClient",
-
+    "OddsAPIClient",
     "api_client",
-
     "DataProcessor",
-
-    "data_processor"
-
+    "data_processor",
 ]
