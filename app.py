@@ -1122,76 +1122,11 @@ elif st.session_state[
                     """,
                     unsafe_allow_html=True,
              )
-                             st.markdown(
-                    f"""
-                    <div class="analysis-card">
+                             
 
-                        <span class="badge">
-                            🎯 VALUE BET
-                        </span>
+                        
 
-                        <h3>
-                            {event_name}
-                        </h3>
-
-                        <p class="muted">
-                            {market_name}
-                            —
-                            {outcome_name}
-                        </p>
-
-                        <hr>
-
-                        <b>Casa:</b>
-                        {bookmaker}
-
-                        &nbsp;&nbsp;
-
-                        <b>Odd:</b>
-                        {money_or_number(odd)}
-
-                        &nbsp;&nbsp;
-
-                        <b>Probabilidade:</b>
-                        {percentage(probability)}
-
-                        &nbsp;&nbsp;
-
-                        <b>EV:</b>
-                        <span class="positive">
-                            {percentage(ev)}
-                        </span>
-
-                        <br><br>
-
-                        <b>Índice OddReal:</b>
-                        {index}
-
-                        &nbsp;&nbsp;
-
-                        <b>Risco:</b>
-                        {risk}
-
-                        &nbsp;&nbsp;
-
-                        <b>Confiança:</b>
-                        {confidence}
-
-                        <br><br>
-
-                        <b>Odd média do mercado:</b>
-                        {money_or_number(average_odd)}
-
-                        &nbsp;&nbsp;
-
-                        <b>Variação:</b>
-                        {percentage(variation)}
-
-                    </div>
-                    """,
-                    unsafe_allow_html=True,
-                )
-
+                        
 
 # ============================================================
 # INTELIGÊNCIA ARTIFICIAL
