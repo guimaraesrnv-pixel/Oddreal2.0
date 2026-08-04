@@ -7,202 +7,351 @@ services/data_processor.py
 Processador de dados recebidos.
 
 Responsável por:
-- Normalização
-- Limpeza
-- Padronização de eventos
-- Preparação para análise
+- Validação;
+- Limpeza;
+- Normalização;
+- Padronização de eventos;
+- Padronização de bookmakers;
+- Preparação para análise;
+- Consolidação das odds;
+- Preparação para o ValueBetEngine.
 
-Versão: 2.0
+IMPORTANTE:
+- Não consulta a API.
+- Não contém API Key.
+- Não calcula Value Bet.
+- Não substitui o OddsEngine.
 """
 
+from __future__ import annotations
 
-from typing import Dict, Any, List
-
-from datetime import datetime
-
+from datetime import datetime, timezone
+from typing import Any, Dict, List
 
 
 class DataProcessor:
     """
-    Processador central de dados.
+    Processador central de dados do OddReal.
     """
 
-
-
-    def __init__(self):
+    def __init__(self) -> None:
 
         self.version = "2.0"
 
-        self.created_at = datetime.now()
+        self.created_at = (
+            datetime.now(
+                timezone.utc
+            )
+        )
 
+    # ==========================================================
+    # TIMESTAMP
+    # ==========================================================
 
+    @staticmethod
+    def _now_iso() -> str:
+        """
+        Retorna timestamp UTC.
+        """
 
-    # ==================================================
-    # VALIDAR DADOS RECEBIDOS
-    # ==================================================
+        return (
+            datetime.now(
+                timezone.utc
+            )
+            .isoformat()
+        )
+
+    # ==========================================================
+    # CONVERSÃO SEGURA
+    # ==========================================================
+
+    @staticmethod
+    def _safe_float(
+        value: Any,
+        default: float = 0.0,
+    ) -> float:
+        """
+        Converte um valor para float.
+        """
+
+        try:
+
+            result = float(
+                value
+            )
+
+            if result != result:
+
+                return default
+
+            return result
+
+        except (
+            TypeError,
+            ValueError,
+        ):
+
+            return default
+
+    # ==========================================================
+    # VALIDAR DADOS
+    # ==========================================================
 
     def validate(
         self,
-        data: Any
+        data: Any,
     ) -> bool:
         """
-        Verifica se os dados possuem conteúdo.
+        Verifica se os dados possuem estrutura válida.
         """
 
         if data is None:
 
             return False
 
-
-
         if isinstance(
             data,
-            list
+            list,
         ):
 
             return len(data) > 0
 
-
-
         if isinstance(
             data,
-            dict
+            dict,
         ):
 
             return len(data) > 0
-
-
 
         return False
 
-
-
-    # ==================================================
-    # PROCESSAR RESPOSTA DA API
-    # ==================================================
+    # ==========================================================
+    # PROCESSAR RESPOSTA
+    # ==========================================================
 
     def process_response(
         self,
-        response: Dict[str, Any]
-    ) -> List[Dict[str, Any]]:
+        response: Any,
+    ) -> List[
+        Dict[str, Any]
+    ]:
         """
-        Extrai dados úteis
-        da resposta da API.
+        Extrai os eventos de uma resposta.
+
+        Aceita:
+        - lista direta de eventos;
+        - {"success": True, "data": [...]};
+        - {"data": [...]};
         """
 
-        if not response.get(
-            "success",
-            False
+        # ------------------------------------------------------
+        # LISTA DIRETA
+        # ------------------------------------------------------
+
+        if isinstance(
+            response,
+            list,
+        ):
+
+            return [
+
+                item
+
+                for item in response
+
+                if isinstance(
+                    item,
+                    dict,
+                )
+
+            ]
+
+        # ------------------------------------------------------
+        # DICIONÁRIO
+        # ------------------------------------------------------
+
+        if not isinstance(
+            response,
+            dict,
         ):
 
             return []
 
+        # ------------------------------------------------------
+        # RESPOSTA PADRONIZADA
+        # ------------------------------------------------------
 
+        if (
+            "success" in response
+            and not response.get(
+                "success",
+                False,
+            )
+        ):
+
+            return []
 
         data = response.get(
             "data",
-            []
+            response,
         )
 
-
-        if not self.validate(
-            data
+        if not isinstance(
+            data,
+            list,
         ):
 
             return []
 
+        return [
 
+            item
 
-        return data
-          # ==================================================
+            for item in data
+
+            if isinstance(
+                item,
+                dict,
+            )
+
+        ]
+
+    # ==========================================================
     # NORMALIZAR EVENTO
-    # ==================================================
+    # ==========================================================
 
     def normalize_event(
         self,
-        event: Dict[str, Any]
+        event: Dict[str, Any],
     ) -> Dict[str, Any]:
         """
-        Converte evento bruto da API
-        para o padrão interno.
+        Normaliza um evento da The Odds API.
+
+        A estrutura de bookmakers permanece compatível
+        com o formato original da API.
         """
+
+        if not isinstance(
+            event,
+            dict,
+        ):
+
+            return {}
+
+        bookmakers = event.get(
+            "bookmakers",
+            [],
+        )
+
+        if not isinstance(
+            bookmakers,
+            list,
+        ):
+
+            bookmakers = []
+
+        normalized_bookmakers = (
+            self.process_bookmakers(
+                bookmakers
+            )
+        )
 
         return {
 
             "id":
+                str(
+                    event.get(
+                        "id",
+                        "",
+                    )
+                ).strip(),
 
-                event.get(
-                    "id",
-                    ""
-                ),
+            "sport_key":
+                str(
+                    event.get(
+                        "sport_key",
+                        "",
+                    )
+                ).strip(),
 
-
-            "sport":
-
-                event.get(
-                    "sport_key",
-                    ""
-                ),
-
+            "sport_title":
+                str(
+                    event.get(
+                        "sport_title",
+                        event.get(
+                            "sport_key",
+                            "",
+                        ),
+                    )
+                ).strip(),
 
             "home_team":
-
-                event.get(
-                    "home_team",
-                    ""
-                ),
-
+                str(
+                    event.get(
+                        "home_team",
+                        "",
+                    )
+                ).strip(),
 
             "away_team":
-
-                event.get(
-                    "away_team",
-                    ""
-                ),
-
+                str(
+                    event.get(
+                        "away_team",
+                        "",
+                    )
+                ).strip(),
 
             "commence_time":
-
-                event.get(
-                    "commence_time",
-                    ""
-                ),
-
+                str(
+                    event.get(
+                        "commence_time",
+                        "",
+                    )
+                ).strip(),
 
             "bookmakers":
-
-                event.get(
-                    "bookmakers",
-                    []
-
-                ),
-
+                normalized_bookmakers,
 
             "processed_at":
-
-                datetime.now()
-                .isoformat()
+                self._now_iso(),
 
         }
 
-
-
-    # ==================================================
-    # PROCESSAR EVENTOS EM LOTE
-    # ==================================================
+    # ==========================================================
+    # PROCESSAR EVENTOS
+    # ==========================================================
 
     def process_events(
         self,
-        events: List[Dict[str, Any]]
-    ) -> List[Dict[str, Any]]:
+        events: List[
+            Dict[str, Any]
+        ],
+    ) -> List[
+        Dict[str, Any]
+    ]:
         """
-        Normaliza uma lista de partidas.
+        Normaliza uma lista de eventos.
         """
 
-        processed = []
+        if not isinstance(
+            events,
+            list,
+        ):
 
+            return []
+
+        processed: List[
+            Dict[str, Any]
+        ] = []
 
         for event in events:
+
+            if not isinstance(
+                event,
+                dict,
+            ):
+
+                continue
 
             normalized = (
                 self.normalize_event(
@@ -210,23 +359,37 @@ class DataProcessor:
                 )
             )
 
+            if not normalized.get(
+                "id"
+            ):
+
+                continue
+
+            if not normalized.get(
+                "home_team"
+            ):
+
+                continue
+
+            if not normalized.get(
+                "away_team"
+            ):
+
+                continue
 
             processed.append(
                 normalized
             )
 
-
         return processed
 
-
-
-    # ==================================================
-    # IDENTIFICAR TIMES
-    # ==================================================
+    # ==========================================================
+    # TIMES
+    # ==========================================================
 
     def extract_teams(
         self,
-        event: Dict[str, Any]
+        event: Dict[str, Any],
     ) -> Dict[str, str]:
         """
         Retorna os times da partida.
@@ -235,797 +398,1111 @@ class DataProcessor:
         return {
 
             "home":
-
-                event.get(
-                    "home_team",
-                    ""
-                ),
-
+                str(
+                    event.get(
+                        "home_team",
+                        "",
+                    )
+                ).strip(),
 
             "away":
-
-                event.get(
-                    "away_team",
-                    ""
-                )
+                str(
+                    event.get(
+                        "away_team",
+                        "",
+                    )
+                ).strip(),
 
         }
 
-
-
-    # ==================================================
-    # IDENTIFICAR ESPORTE
-    # ==================================================
+    # ==========================================================
+    # ESPORTE
+    # ==========================================================
 
     def extract_sport(
         self,
-        event: Dict[str, Any]
+        event: Dict[str, Any],
     ) -> str:
         """
-        Retorna esporte do evento.
+        Retorna o esporte.
         """
 
-        return event.get(
-            "sport",
-            ""
-        )
+        return str(
+            event.get(
+                "sport_key",
+                event.get(
+                    "sport",
+                    "",
+                ),
+            )
+        ).strip()
 
-
-
-    # ==================================================
-    # IDENTIFICAR ID DO EVENTO
-    # ==================================================
+    # ==========================================================
+    # ID
+    # ==========================================================
 
     def extract_event_id(
         self,
-        event: Dict[str, Any]
+        event: Dict[str, Any],
     ) -> str:
         """
-        Retorna identificador único.
+        Retorna o ID do evento.
         """
 
-        return event.get(
-            "id",
-            ""
-        )
-          # ==================================================
-    # PROCESSAR BOOKMAKERS
-    # ==================================================
+        return str(
+            event.get(
+                "id",
+                "",
+            )
+        ).strip()
+
+    # ==========================================================
+    # BOOKMAKERS
+    # ==========================================================
 
     def process_bookmakers(
         self,
-        bookmakers: List[Dict[str, Any]]
-    ) -> List[Dict[str, Any]]:
+        bookmakers: List[
+            Dict[str, Any]
+        ],
+    ) -> List[
+        Dict[str, Any]
+    ]:
         """
-        Normaliza casas de apostas
-        recebidas da API.
+        Normaliza bookmakers sem destruir
+        a estrutura necessária pelo Analyzer.
         """
 
-        processed = []
+        if not isinstance(
+            bookmakers,
+            list,
+        ):
 
+            return []
+
+        processed: List[
+            Dict[str, Any]
+        ] = []
 
         for bookmaker in bookmakers:
 
-            processed.append({
+            if not isinstance(
+                bookmaker,
+                dict,
+            ):
 
-                "name":
+                continue
 
-                    bookmaker.get(
-                        "title",
-                        ""
-                    ),
+            title = str(
+                bookmaker.get(
+                    "title",
+                    "",
+                )
+            ).strip()
 
+            key = str(
+                bookmaker.get(
+                    "key",
+                    "",
+                )
+            ).strip()
 
-                "key":
-
-                    bookmaker.get(
-                        "key",
-                        ""
-                    ),
-
-
-                "markets":
-
+            markets = (
+                self.process_markets(
                     bookmaker.get(
                         "markets",
-                        []
-
+                        [],
                     )
+                )
+            )
 
-            })
+            if not markets:
 
+                continue
+
+            processed.append(
+                {
+
+                    "title": title,
+
+                    "key": key,
+
+                    "markets": markets,
+
+                }
+            )
 
         return processed
 
-
-
-    # ==================================================
-    # PROCESSAR MERCADOS
-    # ==================================================
+    # ==========================================================
+    # MERCADOS
+    # ==========================================================
 
     def process_markets(
         self,
-        markets: List[Dict[str, Any]]
-    ) -> List[Dict[str, Any]]:
+        markets: List[
+            Dict[str, Any]
+        ],
+    ) -> List[
+        Dict[str, Any]
+    ]:
         """
-        Normaliza mercados de apostas.
+        Normaliza mercados e outcomes.
         """
 
-        processed = []
+        if not isinstance(
+            markets,
+            list,
+        ):
 
+            return []
+
+        processed: List[
+            Dict[str, Any]
+        ] = []
 
         for market in markets:
 
-            processed.append({
+            if not isinstance(
+                market,
+                dict,
+            ):
 
-                "key":
+                continue
 
-                    market.get(
-                        "key",
-                        ""
-                    ),
+            key = str(
+                market.get(
+                    "key",
+                    "",
+                )
+            ).strip()
 
+            outcomes = (
+                market.get(
+                    "outcomes",
+                    [],
+                )
+            )
 
-                "outcomes":
+            if not isinstance(
+                outcomes,
+                list,
+            ):
 
-                    market.get(
-                        "outcomes",
-                        []
+                outcomes = []
 
+            processed_outcomes: List[
+                Dict[str, Any]
+            ] = []
+
+            for outcome in outcomes:
+
+                if not isinstance(
+                    outcome,
+                    dict,
+                ):
+
+                    continue
+
+                name = str(
+                    outcome.get(
+                        "name",
+                        "",
+                    )
+                ).strip()
+
+                price = self._safe_float(
+                    outcome.get(
+                        "price",
+                        0,
+                    )
+                )
+
+                if not name:
+
+                    continue
+
+                if price <= 0:
+
+                    continue
+
+                item = {
+
+                    "name": name,
+
+                    "price": price,
+
+                }
+
+                # Mantém pontos extras quando
+                # existirem na resposta da API.
+
+                if (
+                    "point"
+                    in outcome
+                ):
+
+                    item["point"] = (
+                        outcome.get(
+                            "point"
+                        )
                     )
 
-            })
+                processed_outcomes.append(
+                    item
+                )
 
+            if not processed_outcomes:
+
+                continue
+
+            processed.append(
+                {
+
+                    "key": key,
+
+                    "outcomes":
+                        processed_outcomes,
+
+                }
+            )
 
         return processed
 
-
-
-    # ==================================================
-    # PROCESSAR ODDS
-    # ==================================================
+    # ==========================================================
+    # ODDS
+    # ==========================================================
 
     def extract_odds(
         self,
-        market: Dict[str, Any]
-    ) -> List[Dict[str, Any]]:
+        market: Dict[str, Any],
+    ) -> List[
+        Dict[str, Any]
+    ]:
         """
-        Extrai preços das odds.
+        Extrai todas as odds de um mercado.
         """
 
-        odds = []
+        if not isinstance(
+            market,
+            dict,
+        ):
 
+            return []
+
+        odds: List[
+            Dict[str, Any]
+        ] = []
 
         outcomes = market.get(
             "outcomes",
-            []
+            [],
         )
 
+        if not isinstance(
+            outcomes,
+            list,
+        ):
+
+            return []
 
         for outcome in outcomes:
 
-            odds.append({
+            if not isinstance(
+                outcome,
+                dict,
+            ):
 
-                "name":
+                continue
 
-                    outcome.get(
-                        "name",
-                        ""
-                    ),
+            name = str(
+                outcome.get(
+                    "name",
+                    "",
+                )
+            ).strip()
 
+            price = self._safe_float(
+                outcome.get(
+                    "price",
+                    0,
+                )
+            )
 
-                "price":
+            if not name or price <= 0:
 
-                    outcome.get(
-                        "price",
-                        0
+                continue
 
-                    )
+            odds.append(
+                {
 
-            })
+                    "name": name,
 
+                    "price": price,
+
+                }
+            )
 
         return odds
 
-
-
-    # ==================================================
+    # ==========================================================
     # NORMALIZAR BOOKMAKERS DO EVENTO
-    # ==================================================
+    # ==========================================================
 
     def normalize_bookmakers(
         self,
-        event: Dict[str, Any]
+        event: Dict[str, Any],
     ) -> Dict[str, Any]:
         """
-        Organiza bookmakers
-        dentro do evento.
+        Retorna bookmakers normalizados.
         """
 
-        bookmakers = event.get(
-            "bookmakers",
-            []
-        )
+        if not isinstance(
+            event,
+            dict,
+        ):
 
+            return {
+
+                "event_id": "",
+
+                "bookmakers": [],
+
+            }
 
         return {
 
             "event_id":
-
                 event.get(
                     "id",
-                    ""
+                    "",
                 ),
 
-
             "bookmakers":
-
                 self.process_bookmakers(
-                    bookmakers
-                )
+                    event.get(
+                        "bookmakers",
+                        [],
+                    )
+                ),
 
         }
-          # ==================================================
+
+    # ==========================================================
     # COLETAR TODAS AS ODDS
-    # ==================================================
+    # ==========================================================
 
     def collect_all_odds(
         self,
-        bookmakers: List[Dict[str, Any]]
-    ) -> List[Dict[str, Any]]:
+        bookmakers: List[
+            Dict[str, Any]
+        ],
+    ) -> List[
+        Dict[str, Any]
+    ]:
         """
-        Reúne todas as odds disponíveis
-        entre as casas.
+        Reúne todas as cotações.
         """
 
-        collected = []
+        if not isinstance(
+            bookmakers,
+            list,
+        ):
 
+            return []
+
+        collected: List[
+            Dict[str, Any]
+        ] = []
 
         for bookmaker in bookmakers:
 
-            name = bookmaker.get(
-                "name",
-                ""
-            )
+            if not isinstance(
+                bookmaker,
+                dict,
+            ):
 
+                continue
+
+            bookmaker_name = (
+                bookmaker.get(
+                    "title",
+                    bookmaker.get(
+                        "name",
+                        bookmaker.get(
+                            "key",
+                            "",
+                        ),
+                    ),
+                )
+            )
 
             markets = bookmaker.get(
                 "markets",
-                []
+                [],
             )
 
+            if not isinstance(
+                markets,
+                list,
+            ):
+
+                continue
 
             for market in markets:
 
-                outcomes = market.get(
-                    "outcomes",
-                    []
+                if not isinstance(
+                    market,
+                    dict,
+                ):
+
+                    continue
+
+                market_key = (
+                    market.get(
+                        "key",
+                        "",
+                    )
                 )
 
+                for outcome in market.get(
+                    "outcomes",
+                    [],
+                ):
 
-                for outcome in outcomes:
+                    if not isinstance(
+                        outcome,
+                        dict,
+                    ):
 
-                    collected.append({
+                        continue
 
-                        "bookmaker":
+                    price = self._safe_float(
+                        outcome.get(
+                            "price",
+                            0,
+                        )
+                    )
 
-                            name,
+                    if price <= 0:
 
+                        continue
 
-                        "market":
+                    collected.append(
+                        {
 
-                            market.get(
-                                "key",
-                                ""
-                            ),
+                            "bookmaker":
+                                bookmaker_name,
 
+                            "market":
+                                market_key,
 
-                        "selection":
+                            "selection":
+                                outcome.get(
+                                    "name",
+                                    "",
+                                ),
 
-                            outcome.get(
-                                "name",
-                                ""
-                            ),
+                            "price":
+                                price,
 
-
-                        "price":
-
-                            outcome.get(
-                                "price",
-                                0
-
-                            )
-
-                    })
-
+                        }
+                    )
 
         return collected
 
-
-
-    # ==================================================
-    # CALCULAR MÉDIA DE ODDS
-    # ==================================================
+    # ==========================================================
+    # MÉDIA DAS ODDS
+    # ==========================================================
 
     def calculate_average_odds(
         self,
-        odds: List[Dict[str, Any]]
-    ) -> Dict[str, float]:
+        odds: List[
+            Dict[str, Any]
+        ],
+    ) -> Dict[
+        str,
+        float
+    ]:
         """
-        Calcula média das odds
-        por seleção.
+        Calcula a média por seleção.
         """
 
-        grouped = {}
-
+        grouped: Dict[
+            str,
+            List[float]
+        ] = {}
 
         for item in odds:
 
-            selection = item.get(
-                "selection"
-            )
-
-
-            price = item.get(
-                "price",
-                0
-            )
-
-
-            if not selection or not price:
+            if not isinstance(
+                item,
+                dict,
+            ):
 
                 continue
 
+            selection = str(
+                item.get(
+                    "selection",
+                    "",
+                )
+            ).strip()
 
+            price = self._safe_float(
+                item.get(
+                    "price",
+                    0,
+                )
+            )
 
-            if selection not in grouped:
+            if not selection or price <= 0:
 
-                grouped[selection] = []
+                continue
 
-
-
-            grouped[selection].append(
+            grouped.setdefault(
+                selection,
+                [],
+            ).append(
                 price
             )
 
+        return {
 
+            selection:
+                round(
+                    sum(values)
+                    / len(values),
+                    3,
+                )
 
-        averages = {}
+            for selection, values
+            in grouped.items()
 
+            if values
 
-        for selection, values in grouped.items():
+        }
 
-            averages[selection] = round(
-
-                sum(values)
-                /
-                len(values),
-
-                3
-
-            )
-
-
-        return averages
-
-
-
-    # ==================================================
-    # ENCONTRAR MELHOR ODDS
-    # ==================================================
+    # ==========================================================
+    # MELHORES ODDS
+    # ==========================================================
 
     def best_odds(
         self,
-        odds: List[Dict[str, Any]]
-    ) -> Dict[str, Dict[str, Any]]:
+        odds: List[
+            Dict[str, Any]
+        ],
+    ) -> Dict[
+        str,
+        Dict[str, Any]
+    ]:
         """
-        Retorna a melhor cotação
-        encontrada para cada seleção.
+        Retorna a maior odd por seleção.
         """
 
-        best = {}
-
+        best: Dict[
+            str,
+            Dict[str, Any]
+        ] = {}
 
         for item in odds:
 
-            selection = item.get(
-                "selection"
-            )
-
-
-            price = item.get(
-                "price",
-                0
-            )
-
-
-            if not selection:
+            if not isinstance(
+                item,
+                dict,
+            ):
 
                 continue
 
+            selection = str(
+                item.get(
+                    "selection",
+                    "",
+                )
+            ).strip()
 
+            price = self._safe_float(
+                item.get(
+                    "price",
+                    0,
+                )
+            )
+
+            if not selection or price <= 0:
+
+                continue
 
             if (
                 selection not in best
-                or
-                price > best[selection]["price"]
+                or price
+                > self._safe_float(
+                    best[
+                        selection
+                    ].get(
+                        "price",
+                        0,
+                    )
+                )
             ):
 
-                best[selection] = item
-
-
+                best[selection] = dict(
+                    item
+                )
 
         return best
 
-
-
-    # ==================================================
+    # ==========================================================
     # CONSOLIDAR MERCADO
-    # ==================================================
+    # ==========================================================
 
     def consolidate_market(
         self,
-        event: Dict[str, Any]
+        event: Dict[str, Any],
     ) -> Dict[str, Any]:
         """
-        Cria visão consolidada
-        de um mercado.
+        Cria visão consolidada das odds.
         """
+
+        if not isinstance(
+            event,
+            dict,
+        ):
+
+            return {
+
+                "event_id": "",
+
+                "total_quotes": 0,
+
+                "average_odds": {},
+
+                "best_odds": {},
+
+            }
 
         bookmakers = event.get(
             "bookmakers",
-            []
+            [],
         )
 
-
-        odds = self.collect_all_odds(
-            bookmakers
+        odds = (
+            self.collect_all_odds(
+                bookmakers
+            )
         )
-
 
         return {
 
             "event_id":
-
                 event.get(
                     "id",
-                    ""
+                    "",
                 ),
-
 
             "total_quotes":
-
-                len(
-                    odds
-                ),
-
+                len(odds),
 
             "average_odds":
-
                 self.calculate_average_odds(
                     odds
                 ),
 
-
             "best_odds":
-
                 self.best_odds(
                     odds
-                )
+                ),
 
         }
-         # ==================================================
-    # PREPARAR ENTRADA PARA VALUE ENGINE
-    # ==================================================
+
+    # ==========================================================
+    # PREPARAR VALUE ENGINE
+    # ==========================================================
 
     def prepare_value_input(
         self,
         event: Dict[str, Any],
-        market: Dict[str, Any]
-    ) -> List[Dict[str, Any]]:
+        market: Dict[str, Any],
+    ) -> List[
+        Dict[str, Any]
+    ]:
         """
-        Converte dados processados
-        para o formato esperado
-        pelo ValueEngine.
+        Prepara oportunidades para o ValueBetEngine.
         """
 
-        opportunities = []
+        if not isinstance(
+            event,
+            dict,
+        ):
 
+            return []
 
-        best_odds = market.get(
+        if not isinstance(
+            market,
+            dict,
+        ):
+
+            return []
+
+        opportunities: List[
+            Dict[str, Any]
+        ] = []
+
+        best = market.get(
             "best_odds",
-            {}
+            {},
         )
 
-
-        average_odds = market.get(
+        averages = market.get(
             "average_odds",
-            {}
+            {},
         )
 
+        if not isinstance(
+            best,
+            dict,
+        ):
 
-        for selection, odd_data in best_odds.items():
+            best = {}
 
-            opportunities.append({
+        if not isinstance(
+            averages,
+            dict,
+        ):
 
-                "event_id":
+            averages = {}
 
-                    event.get(
-                        "id",
-                        ""
-                    ),
+        for selection, odd_data in best.items():
 
+            if not isinstance(
+                odd_data,
+                dict,
+            ):
 
-                "sport":
+                continue
 
-                    event.get(
-                        "sport",
-                        ""
-                    ),
+            opportunities.append(
+                {
 
+                    "event_id":
+                        event.get(
+                            "id",
+                            "",
+                        ),
 
-                "home_team":
+                    "sport":
+                        event.get(
+                            "sport_title",
+                            event.get(
+                                "sport_key",
+                                "",
+                            ),
+                        ),
 
-                    event.get(
-                        "home_team",
-                        ""
-                    ),
+                    "home_team":
+                        event.get(
+                            "home_team",
+                            "",
+                        ),
 
+                    "away_team":
+                        event.get(
+                            "away_team",
+                            "",
+                        ),
 
-                "away_team":
-
-                    event.get(
-                        "away_team",
-                        ""
-                    ),
-
-
-                "selection":
-
-                    selection,
-
-
-                "odd":
-
-                    odd_data.get(
-                        "price",
-                        0
-                    ),
-
-
-                "average_odd":
-
-                    average_odds.get(
+                    "selection":
                         selection,
-                        0
-                    ),
 
+                    "odd":
+                        self._safe_float(
+                            odd_data.get(
+                                "price",
+                                0,
+                            )
+                        ),
 
-                "bookmaker":
+                    "average_odd":
+                        self._safe_float(
+                            averages.get(
+                                selection,
+                                0,
+                            )
+                        ),
 
-                    odd_data.get(
-                        "bookmaker",
-                        ""
-                    )
+                    "bookmaker":
+                        odd_data.get(
+                            "bookmaker",
+                            odd_data.get(
+                                "title",
+                                "",
+                            ),
+                        ),
 
-            })
+                    "market":
+                        odd_data.get(
+                            "market",
+                            "",
+                        ),
 
+                }
+            )
 
         return opportunities
 
-
-
-    # ==================================================
-    # CRIAR ESTRUTURA COMPLETA
-    # ==================================================
+    # ==========================================================
+    # PACOTE DE ANÁLISE
+    # ==========================================================
 
     def build_analysis_package(
         self,
-        event: Dict[str, Any]
+        event: Dict[str, Any],
     ) -> Dict[str, Any]:
         """
-        Monta pacote completo
-        para análise.
+        Cria pacote completo de análise.
         """
 
-        normalized_event = (
+        normalized = (
             self.normalize_event(
                 event
             )
         )
 
+        if not normalized:
+
+            return {}
 
         consolidated = (
             self.consolidate_market(
-                normalized_event
+                normalized
             )
         )
-
 
         opportunities = (
             self.prepare_value_input(
-
-                normalized_event,
-
-                consolidated
-
+                normalized,
+                consolidated,
             )
         )
-
 
         return {
 
             "event":
-
-                normalized_event,
-
+                normalized,
 
             "market":
-
                 consolidated,
 
-
             "opportunities":
-
                 opportunities,
 
-
             "created_at":
-
-                datetime.now()
-                .isoformat()
+                self._now_iso(),
 
         }
 
-
-
-    # ==================================================
-    # PROCESSAR LISTA COMPLETA
-    # ==================================================
+    # ==========================================================
+    # LOTE
+    # ==========================================================
 
     def build_batch_package(
         self,
-        events: List[Dict[str, Any]]
-    ) -> List[Dict[str, Any]]:
+        events: List[
+            Dict[str, Any]
+        ],
+    ) -> List[
+        Dict[str, Any]
+    ]:
         """
-        Processa vários eventos.
+        Cria pacotes para vários eventos.
         """
 
-        packages = []
+        if not isinstance(
+            events,
+            list,
+        ):
 
+            return []
+
+        packages: List[
+            Dict[str, Any]
+        ] = []
 
         for event in events:
 
-            packages.append(
-
+            package = (
                 self.build_analysis_package(
                     event
                 )
-
             )
 
+            if package:
+
+                packages.append(
+                    package
+                )
 
         return packages
-          # ==================================================
-    # STATUS DO PROCESSADOR
-    # ==================================================
+
+    # ==========================================================
+    # STATUS
+    # ==========================================================
 
     def service_status(
-        self
+        self,
     ) -> Dict[str, Any]:
         """
-        Retorna informações do serviço.
+        Retorna status do processador.
         """
 
         return {
 
             "service":
-
                 "data_processor",
 
-
             "module":
-
                 "services.data_processor",
 
-
             "version":
-
                 self.version,
 
-
             "initialized":
-
                 True,
 
-
             "created_at":
-
-                self.created_at.isoformat()
+                self.created_at.isoformat(),
 
         }
 
-
-
-    # ==================================================
-    # RESUMO DOS DADOS
-    # ==================================================
+    # ==========================================================
+    # RESUMO
+    # ==========================================================
 
     def data_summary(
         self,
-        data: List[Dict[str, Any]]
+        data: List[
+            Dict[str, Any]
+        ],
     ) -> Dict[str, Any]:
         """
-        Gera resumo dos dados processados.
+        Gera resumo dos dados.
         """
+
+        if not isinstance(
+            data,
+            list,
+        ):
+
+            data = []
+
+        valid = [
+
+            item
+
+            for item in data
+
+            if isinstance(
+                item,
+                dict,
+            )
+            and bool(item)
+
+        ]
+
+        sports = sorted(
+            {
+                str(
+                    item.get(
+                        "sport_title",
+                        item.get(
+                            "sport_key",
+                            "",
+                        ),
+                    )
+                )
+
+                for item in valid
+
+                if item.get(
+                    "sport_title",
+                    item.get(
+                        "sport_key",
+                        "",
+                    ),
+                )
+            }
+        )
 
         return {
 
             "total_items":
+                len(data),
 
-                len(
-                    data
-                ),
+            "valid_items":
+                len(valid),
 
+            "total_sports":
+                len(sports),
+
+            "sports":
+                sports,
 
             "valid":
-
-                self.validate(
-                    data
-                ),
-
+                len(valid) > 0,
 
             "generated_at":
-
-                datetime.now()
-                .isoformat()
+                self._now_iso(),
 
         }
 
-
-
-    # ==================================================
-    # LIMPAR DADOS
-    # ==================================================
+    # ==========================================================
+    # LIMPEZA
+    # ==========================================================
 
     def clean(
         self,
-        data: List[Dict[str, Any]]
-    ) -> List[Dict[str, Any]]:
+        data: List[
+            Dict[str, Any]
+        ],
+    ) -> List[
+        Dict[str, Any]
+    ]:
         """
-        Remove registros vazios
-        ou inválidos.
+        Remove registros inválidos.
         """
 
-        cleaned = []
+        if not isinstance(
+            data,
+            list,
+        ):
 
+            return []
 
-        for item in data:
+        return [
+
+            item
+
+            for item in data
 
             if isinstance(
                 item,
-                dict
-            ) and len(item) > 0:
+                dict,
+            )
+            and bool(item)
 
-                cleaned.append(
-                    item
-                )
+        ]
 
-
-        return cleaned
-
-
-
-    # ==================================================
-    # PIPELINE COMPLETO
-    # ==================================================
+    # ==========================================================
+    # PIPELINE LOCAL
+    # ==========================================================
 
     def run(
         self,
-        response: Dict[str, Any]
-    ) -> List[Dict[str, Any]]:
+        response: Any,
+    ) -> List[
+        Dict[str, Any]
+    ]:
         """
-        Executa processamento completo.
+        Executa o processamento completo.
         """
 
         raw_data = (
@@ -1034,22 +1511,19 @@ class DataProcessor:
             )
         )
 
-
         cleaned = (
             self.clean(
                 raw_data
             )
         )
 
-
         return self.process_events(
             cleaned
         )
 
 
-
-# ======================================================
+# ==========================================================
 # INSTÂNCIA GLOBAL
-# ======================================================
+# ==========================================================
 
 data_processor = DataProcessor()
