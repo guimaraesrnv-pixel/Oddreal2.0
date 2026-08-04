@@ -397,7 +397,6 @@ result = get_result()
 # ============================================================
 # DASHBOARD
 # ============================================================
-
 if st.session_state[
     "page"
 ] == "Dashboard":
@@ -531,8 +530,7 @@ if st.session_state[
                 """,
                 unsafe_allow_html=True,
             )
-         
- 
+
         # ----------------------------------------------------
         # MELHOR OPORTUNIDADE
         # ----------------------------------------------------
@@ -588,9 +586,7 @@ if st.session_state[
                 <div class="analysis-card">
 
                     <h3>
-                        {home}
-                        ×
-                        {away}
+                        {home} × {away}
                     </h3>
 
                     <p class="muted">
@@ -644,7 +640,7 @@ if st.session_state[
             )
 
         # ----------------------------------------------------
-        # ANÁLISES
+        # ANÁLISES RECENTES
         # ----------------------------------------------------
 
         st.markdown(
@@ -712,9 +708,7 @@ if st.session_state[
                         </span>
 
                         <h4>
-                            {home}
-                            ×
-                            {away}
+                            {home} × {away}
                         </h4>
 
                         Odd:
@@ -743,7 +737,13 @@ if st.session_state[
                     </div>
                     """,
                     unsafe_allow_html=True,
-                )
+         )
+                              
+
+            
+                
+
+                
 
 
 # ============================================================
