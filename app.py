@@ -1073,6 +1073,142 @@ elif st.session_state[
 
                         <hr>
 
+# ============================================================
+# VALUE BETS
+# ============================================================
+
+elif st.session_state["page"] == "Value Bets":
+
+    st.markdown(
+        '<div class="section-title">🎯 Value Bets</div>',
+        unsafe_allow_html=True,
+    )
+
+    if not result:
+
+        st.info(
+            "Carregue o mercado antes de visualizar as Value Bets."
+        )
+
+    else:
+
+        value_bets = result.get(
+            "value_bets",
+            [],
+        )
+
+        if not value_bets:
+
+            st.warning(
+                "Nenhuma Value Bet foi encontrada no mercado atual."
+            )
+
+        else:
+
+            st.markdown(
+                f"""
+                <div class="section-title">
+                    {len(value_bets)} oportunidades encontradas
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+            for opportunity in value_bets:
+
+                event_name = opportunity.get(
+                    "event",
+                    (
+                        f"{opportunity.get('home_team', 'Mandante')} "
+                        f"× "
+                        f"{opportunity.get('away_team', 'Visitante')}"
+                    ),
+                )
+
+                market_name = opportunity.get(
+                    "selected_market",
+                    opportunity.get(
+                        "market",
+                        "Mercado",
+                    ),
+                )
+
+                outcome_name = opportunity.get(
+                    "selected_outcome",
+                    opportunity.get(
+                        "outcome",
+                        "Resultado",
+                    ),
+                )
+
+                bookmaker = opportunity.get(
+                    "selected_bookmaker",
+                    opportunity.get(
+                        "bookmaker",
+                        "Casa não informada",
+                    ),
+                )
+
+                odd = opportunity.get(
+                    "odd",
+                    0,
+                )
+
+                probability = opportunity.get(
+                    "probability",
+                    0,
+                )
+
+                ev = opportunity.get(
+                    "expected_value",
+                    0,
+                )
+
+                index = opportunity.get(
+                    "oddreal_index",
+                    0,
+                )
+
+                risk = opportunity.get(
+                    "risk",
+                    "Alto",
+                )
+
+                confidence = opportunity.get(
+                    "confidence_level",
+                    "Baixa",
+                )
+
+                average_odd = opportunity.get(
+                    "average_odd",
+                    0,
+                )
+
+                variation = opportunity.get(
+                    "market_variation",
+                    0,
+                )
+
+                st.markdown(
+                    f"""
+                    <div class="analysis-card">
+
+                        <span class="badge">
+                            🎯 VALUE BET
+                        </span>
+
+                        <h3>
+                            {event_name}
+                        </h3>
+
+                        <p class="muted">
+                            {market_name}
+                            —
+                            {outcome_name}
+                        </p>
+
+                        <hr>
+
                         <b>Casa:</b>
                         {bookmaker}
 
@@ -1121,7 +1257,7 @@ elif st.session_state[
                     </div>
                     """,
                     unsafe_allow_html=True,
-             )
+    )
                              
 
                         
