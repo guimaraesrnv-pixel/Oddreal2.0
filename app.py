@@ -691,68 +691,7 @@ if st.session_state[
                 is_value = analysis.get(
                     "is_value_bet",
                     False,
-                )
 
-                badge = (
-                    "🎯 VALUE BET"
-                    if is_value
-                    else "Análise"
-                )
-
-                st.markdown(
-                    f"""
-                    <div class="analysis-card">
-
-                        <span class="badge">
-                            {badge}
-                        </span>
-
-                        <h4>
-                            {home} × {away}
-                        </h4>
-
-                        Odd:
-                        <b>
-                            {money_or_number(odd)}
-                        </b>
-
-                        &nbsp; | &nbsp;
-
-                        EV:
-                        <b class="{
-                            'positive'
-                            if ev > 0
-                            else 'negative'
-                        }">
-                            {percentage(ev)}
-                        </b>
-
-                        &nbsp; | &nbsp;
-
-                        Índice:
-                        <b>
-                            {index}
-                        </b>
-
-                    </div>
-                    """,
-                    unsafe_allow_html=True,
-         )
-                              
-
-            
-                
-
-                
-
-
-# ============================================================
-# VALUE BETS
-# ============================================================
-
-elif st.session_state[
-    "page"
-] == "Value Bets":
 
     st.markdown(
         '<div class="section-title">🎯 Value Bets</div>',
@@ -891,6 +830,311 @@ elif st.session_state[
                     unsafe_allow_html=True,
                 )
 
+# ============================================================
+# DASHBOARD
+# ============================================================
+
+if st.session_state[
+    "page"
+] == "Dashboard":
+
+    st.markdown(
+        '<div class="section-title">Visão geral do mercado</div>',
+        unsafe_allow_html=True,
+    )
+
+    if not result:
+
+        st.info(
+            "Nenhum mercado foi carregado ainda."
+        )
+
+        if st.button(
+            "🚀 Carregar mercado agora",
+            type="primary",
+            use_container_width=True,
+        ):
+
+            run_pipeline()
+
+            st.rerun()
+
+    else:
+
+        total_events = result.get(
+            "total_events",
+            0,
+        )
+
+        total_analyses = result.get(
+            "total_analyses",
+            0,
+        )
+
+        total_value_bets = result.get(
+            "total_value_bets",
+            0,
+        )
+
+        summary = result.get(
+            "analysis_summary",
+            {},
+        )
+
+        average_index = summary.get(
+            "average_index",
+            0,
+        )
+
+        col1, col2, col3, col4 = st.columns(4)
+
+        with col1:
+
+            st.markdown(
+                f"""
+                <div class="metric-card">
+
+                    <div class="metric-title">
+                        Eventos
+                    </div>
+
+                    <div class="metric-value">
+                        {total_events}
+                    </div>
+
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+        with col2:
+
+            st.markdown(
+                f"""
+                <div class="metric-card">
+
+                    <div class="metric-title">
+                        Análises
+                    </div>
+
+                    <div class="metric-value">
+                        {total_analyses}
+                    </div>
+
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+        with col3:
+
+            st.markdown(
+                f"""
+                <div class="metric-card">
+
+                    <div class="metric-title">
+                        Value Bets
+                    </div>
+
+                    <div class="metric-value">
+                        {total_value_bets}
+                    </div>
+
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+        with col4:
+
+            st.markdown(
+                f"""
+                <div class="metric-card">
+
+                    <div class="metric-title">
+                        Índice médio
+                    </div>
+
+                    <div class="metric-value">
+                        {money_or_number(
+                            average_index
+                        )}
+                    </div>
+
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+        st.markdown(
+            '<div class="section-title">Melhor oportunidade</div>',
+            unsafe_allow_html=True,
+        )
+
+        best_opportunity = result.get(
+            "best_opportunity"
+        )
+
+        if best_opportunity:
+
+            event_name = best_opportunity.get(
+                "event",
+                "Evento",
+            )
+
+            market_name = best_opportunity.get(
+                "market",
+                "Mercado",
+            )
+
+            odd = best_opportunity.get(
+                "odd",
+                0,
+            )
+
+            ev = best_opportunity.get(
+                "expected_value",
+                0,
+            )
+
+            index = best_opportunity.get(
+                "oddreal_index",
+                0,
+            )
+
+            st.markdown(
+                f"""
+                <div class="analysis-card">
+
+                    <div class="badge">
+                        ⭐ Melhor oportunidade
+                    </div>
+
+                    <h3>
+                        {event_name}
+                    </h3>
+
+                    <p class="muted">
+                        Mercado: {market_name}
+                    </p>
+
+                    <p>
+                        Odd:
+                        <b>{odd}</b>
+                    </p>
+
+                    <p class="positive">
+                        EV:
+                        +{ev}%
+                    </p>
+
+                    <p>
+                        Índice:
+                        <b>{index}</b>
+                    </p>
+
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+        else:
+
+            st.info(
+                "Nenhuma oportunidade disponível."
+            )
+
+        st.markdown(
+            '<div class="section-title">Análises recentes</div>',
+            unsafe_allow_html=True,
+        )
+
+        recent_analyses = result.get(
+            "analyses",
+            [],
+        )
+
+        if recent_analyses:
+
+            for analysis in recent_analyses[:5]:
+
+                event_name = analysis.get(
+                    "event",
+                    "Evento",
+                )
+
+                market_name = analysis.get(
+                    "market",
+                    "Mercado",
+                )
+
+                odd = analysis.get(
+                    "odd",
+                    0,
+                )
+
+                ev = analysis.get(
+                    "expected_value",
+                    0,
+                )
+
+                index = analysis.get(
+                    "oddreal_index",
+                    0,
+                )
+
+                st.markdown(
+                    f"""
+                    <div class="analysis-card">
+
+                        <div class="badge">
+                            {market_name}
+                        </div>
+
+                        <h4>
+                            {event_name}
+                        </h4>
+
+                        <p>
+                            Odd:
+                            <b>{odd}</b>
+                        </p>
+
+                        <p>
+                            EV:
+                            <span class="{
+                                "positive"
+                                if ev >= 0
+                                else "negative"
+                            }">
+                                {ev}%
+                            </span>
+                        </p>
+
+                        <p>
+                            Índice:
+                            <b>{index}</b>
+                        </p>
+
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+
+        else:
+
+            st.warning(
+                "Nenhuma análise foi encontrada."
+            )
+
+
+# ============================================================
+# VALUE BETS
+# ============================================================
+
+elif st.session_state[
+    "page"
+] == "Value Bets":
 
 # ============================================================
 # IA
