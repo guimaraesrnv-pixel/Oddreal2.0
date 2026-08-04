@@ -21,10 +21,18 @@ Value Bets
 IA
     ↓
 Dashboard
+
+Responsabilidade deste módulo:
+- Orquestrar o fluxo completo;
+- Não realizar cálculos quantitativos próprios;
+- Preservar a estrutura original dos dados;
+- Preparar informações para o Analyzer;
+- Consolidar o resultado final para o Dashboard.
 """
 
 from __future__ import annotations
 
+from copy import deepcopy
 from typing import Any, Dict, List, Optional
 
 from services.api_client import api_client
@@ -35,7 +43,7 @@ from core.analyzer import analyzer
 
 class Pipeline:
     """
-    Orquestra o processamento completo do OddReal.
+    Orquestra o processamento completo do OddReal 2.0.
     """
 
     def __init__(self) -> None:
@@ -45,6 +53,37 @@ class Pipeline:
         )
 
     # ==========================================================
+    # UTILITÁRIOS
+    # ==========================================================
+
+    @staticmethod
+    def _safe_float(
+        value: Any,
+    ) -> Optional[float]:
+        """
+        Converte um valor para float com segurança.
+        """
+
+        try:
+
+            if value is None:
+                return None
+
+            result = float(value)
+
+            if result <= 0:
+                return None
+
+            return result
+
+        except (
+            TypeError,
+            ValueError,
+        ):
+
+            return None
+
+    # ==========================================================
     # EXTRAÇÃO DA MELHOR ODD
     # ==========================================================
 
@@ -52,6 +91,13 @@ class Pipeline:
         self,
         event: Dict[str, Any],
     ) -> Optional[Dict[str, Any]]:
+        """
+        Encontra a maior odd disponível no evento.
+
+        IMPORTANTE:
+        Esta função NÃO altera a estrutura original
+        dos bookmakers.
+        """
 
         bookmakers = event.get(
             "bookmakers",
@@ -80,12 +126,12 @@ class Pipeline:
 
             bookmaker_name = (
                 bookmaker.get(
-                    "title",
-                    bookmaker.get(
-                        "key",
-                        "Desconhecida",
-                    ),
+                    "title"
                 )
+                or bookmaker.get(
+                    "key"
+                )
+                or "Desconhecida"
             )
 
             markets = bookmaker.get(
@@ -109,9 +155,11 @@ class Pipeline:
 
                     continue
 
-                market_name = market.get(
-                    "key",
-                    "unknown",
+                market_name = (
+                    market.get(
+                        "key"
+                    )
+                    or "unknown"
                 )
 
                 outcomes = market.get(
@@ -135,25 +183,13 @@ class Pipeline:
 
                         continue
 
-                    price = outcome.get(
-                        "price"
+                    price = self._safe_float(
+                        outcome.get(
+                            "price"
+                        )
                     )
 
-                    try:
-
-                        price = float(
-                            price
-                        )
-
-                    except (
-                        TypeError,
-                        ValueError,
-                    ):
-
-                        continue
-
-                    if price <= 0:
-
+                    if price is None:
                         continue
 
                     candidate = {
@@ -168,9 +204,11 @@ class Pipeline:
                             market_name
                         ),
 
-                        "outcome": outcome.get(
-                            "name",
-                            "unknown",
+                        "outcome": (
+                            outcome.get(
+                                "name",
+                                "unknown",
+                            )
                         ),
 
                     }
@@ -192,6 +230,12 @@ class Pipeline:
         self,
         event: Dict[str, Any],
     ) -> List[Dict[str, Any]]:
+        """
+        Cria uma visão plana das odds disponíveis.
+
+        A estrutura original de bookmakers permanece
+        preservada no evento.
+        """
 
         bookmakers = event.get(
             "bookmakers",
@@ -220,12 +264,12 @@ class Pipeline:
 
             bookmaker_name = (
                 bookmaker.get(
-                    "title",
-                    bookmaker.get(
-                        "key",
-                        "Desconhecida",
-                    ),
+                    "title"
                 )
+                or bookmaker.get(
+                    "key"
+                )
+                or "Desconhecida"
             )
 
             markets = bookmaker.get(
@@ -249,9 +293,11 @@ class Pipeline:
 
                     continue
 
-                market_name = market.get(
-                    "key",
-                    "unknown",
+                market_name = (
+                    market.get(
+                        "key"
+                    )
+                    or "unknown"
                 )
 
                 outcomes = market.get(
@@ -275,25 +321,13 @@ class Pipeline:
 
                         continue
 
-                    price = outcome.get(
-                        "price"
+                    price = self._safe_float(
+                        outcome.get(
+                            "price"
+                        )
                     )
 
-                    try:
-
-                        price = float(
-                            price
-                        )
-
-                    except (
-                        TypeError,
-                        ValueError,
-                    ):
-
-                        continue
-
-                    if price <= 0:
-
+                    if price is None:
                         continue
 
                     odds.append(
@@ -309,9 +343,11 @@ class Pipeline:
                                 market_name
                             ),
 
-                            "outcome": outcome.get(
-                                "name",
-                                "unknown",
+                            "outcome": (
+                                outcome.get(
+                                    "name",
+                                    "unknown",
+                                )
                             ),
 
                         }
@@ -329,6 +365,15 @@ class Pipeline:
     ) -> Optional[
         Dict[str, Any]
     ]:
+        """
+        Prepara um evento para o Analyzer.
+
+        NÃO substitui bookmakers.
+
+        São adicionados apenas campos auxiliares:
+        - best_odd
+        - market_odds
+        """
 
         if not isinstance(
             event,
@@ -336,6 +381,10 @@ class Pipeline:
         ):
 
             return None
+
+        # ------------------------------------------------------
+        # MELHOR ODD
+        # ------------------------------------------------------
 
         best_odd = (
             self._extract_best_odd(
@@ -347,6 +396,10 @@ class Pipeline:
 
             return None
 
+        # ------------------------------------------------------
+        # ODDS PLANAS
+        # ------------------------------------------------------
+
         market_odds = (
             self._extract_market_odds(
                 event
@@ -357,17 +410,35 @@ class Pipeline:
 
             return None
 
-        return {
+        # ------------------------------------------------------
+        # PRESERVAR EVENTO ORIGINAL
+        # ------------------------------------------------------
 
-            **event,
+        prepared = deepcopy(
+            event
+        )
 
-            "best_odd": best_odd,
+        # ------------------------------------------------------
+        # CAMPOS AUXILIARES
+        # ------------------------------------------------------
 
-            "market_odds": market_odds,
+        prepared["best_odd"] = (
+            best_odd
+        )
 
-            "bookmakers": market_odds,
+        prepared["market_odds"] = (
+            market_odds
+        )
 
-        }
+        # IMPORTANTE:
+        # NÃO fazemos:
+        #
+        # prepared["bookmakers"] = market_odds
+        #
+        # porque isso destruiria a estrutura
+        # original recebida da The Odds API.
+
+        return prepared
 
     # ==========================================================
     # PREPARAÇÃO DOS EVENTOS
@@ -381,6 +452,16 @@ class Pipeline:
     ) -> List[
         Dict[str, Any]
     ]:
+        """
+        Prepara todos os eventos válidos.
+        """
+
+        if not isinstance(
+            events,
+            list,
+        ):
+
+            return []
 
         prepared_events: List[
             Dict[str, Any]
@@ -421,11 +502,27 @@ class Pipeline:
     ) -> Dict[str, Any]:
         """
         Executa todo o pipeline.
+
+        Fluxo:
+
+        API
+        ↓
+        DataManager
+        ↓
+        Preparação
+        ↓
+        Analyzer
+        ↓
+        Value Bets
+        ↓
+        Dados para IA
+        ↓
+        Resultado
         """
 
-        # ------------------------------------------------------
-        # 1. COLETA
-        # ------------------------------------------------------
+        # ======================================================
+        # 1. COLETA DA API
+        # ======================================================
 
         try:
 
@@ -451,9 +548,9 @@ class Pipeline:
 
             raw_events = []
 
-        # ------------------------------------------------------
+        # ======================================================
         # 2. DATA MANAGER
-        # ------------------------------------------------------
+        # ======================================================
 
         try:
 
@@ -463,12 +560,26 @@ class Pipeline:
                 )
             )
 
+            if not isinstance(
+                managed_data,
+                dict,
+            ):
+
+                managed_data = {}
+
             clean_events = (
                 managed_data.get(
                     "analysis_events",
                     [],
                 )
             )
+
+            if not isinstance(
+                clean_events,
+                list,
+            ):
+
+                clean_events = []
 
         except Exception as exc:
 
@@ -481,7 +592,11 @@ class Pipeline:
 
             managed_data = {
 
-                "raw_events": raw_events,
+                "raw_events": (
+                    deepcopy(
+                        raw_events
+                    )
+                ),
 
                 "clean_events": [],
 
@@ -491,9 +606,9 @@ class Pipeline:
 
             }
 
-        # ------------------------------------------------------
-        # 3. NORMALIZAÇÃO DAS ODDS
-        # ------------------------------------------------------
+        # ======================================================
+        # 3. PREPARAÇÃO DOS EVENTOS
+        # ======================================================
 
         events = (
             self._prepare_events(
@@ -501,15 +616,22 @@ class Pipeline:
             )
         )
 
-        # ------------------------------------------------------
-        # 4. ANÁLISE
-        # ------------------------------------------------------
+        # ======================================================
+        # 4. ANALYZER
+        # ======================================================
 
         try:
 
             analyses = analyzer.analyze(
                 events
             )
+
+            if not isinstance(
+                analyses,
+                list,
+            ):
+
+                analyses = []
 
         except Exception as exc:
 
@@ -520,9 +642,9 @@ class Pipeline:
 
             analyses = []
 
-        # ------------------------------------------------------
+        # ======================================================
         # 5. VALUE BETS
-        # ------------------------------------------------------
+        # ======================================================
 
         try:
 
@@ -531,6 +653,13 @@ class Pipeline:
                     analyses
                 )
             )
+
+            if not isinstance(
+                value_bets,
+                list,
+            ):
+
+                value_bets = []
 
         except Exception as exc:
 
@@ -541,9 +670,12 @@ class Pipeline:
 
             value_bets = []
 
-        # ------------------------------------------------------
+        # ======================================================
         # 6. MELHOR OPORTUNIDADE
-        # ------------------------------------------------------
+        # ======================================================
+
+        best_match = None
+        best_value_bet = None
 
         try:
 
@@ -552,6 +684,15 @@ class Pipeline:
                     analyses
                 )
             )
+
+        except Exception as exc:
+
+            error(
+                "Erro ao identificar "
+                f"melhor oportunidade: {exc}"
+            )
+
+        try:
 
             best_value_bet = (
                 analyzer.best_value_bet(
@@ -563,16 +704,12 @@ class Pipeline:
 
             error(
                 "Erro ao identificar "
-                f"melhores oportunidades: {exc}"
+                f"melhor Value Bet: {exc}"
             )
 
-            best_match = None
-
-            best_value_bet = None
-
-        # ------------------------------------------------------
-        # 7. RESUMO
-        # ------------------------------------------------------
+        # ======================================================
+        # 7. RESUMO DA ANÁLISE
+        # ======================================================
 
         try:
 
@@ -582,13 +719,25 @@ class Pipeline:
                 )
             )
 
-        except Exception:
+            if not isinstance(
+                analysis_summary,
+                dict,
+            ):
+
+                analysis_summary = {}
+
+        except Exception as exc:
+
+            error(
+                "Erro ao gerar resumo "
+                f"da análise: {exc}"
+            )
 
             analysis_summary = {}
 
-        # ------------------------------------------------------
+        # ======================================================
         # 8. DADOS PARA IA
-        # ------------------------------------------------------
+        # ======================================================
 
         try:
 
@@ -597,6 +746,13 @@ class Pipeline:
                     analyses
                 )
             )
+
+            if not isinstance(
+                ai_data,
+                list,
+            ):
+
+                ai_data = []
 
         except Exception as exc:
 
@@ -607,45 +763,103 @@ class Pipeline:
 
             ai_data = []
 
-        # ------------------------------------------------------
-        # 9. RESULTADO FINAL
-        # ------------------------------------------------------
+        # ======================================================
+        # 9. RESUMO DOS DADOS
+        # ======================================================
 
-        result = {
+        data_summary = (
+            managed_data.get(
+                "summary",
+                {},
+            )
+        )
 
-            "events": events,
+        if not isinstance(
+            data_summary,
+            dict,
+        ):
 
-            "raw_events": raw_events,
+            data_summary = {}
 
-            "clean_events": (
+        # ======================================================
+        # 10. RESULTADO FINAL
+        # ======================================================
+
+        result: Dict[
+            str,
+            Any
+        ] = {
+
+            # --------------------------------------------------
+            # EVENTOS
+            # --------------------------------------------------
+
+            "events": deepcopy(
+                events
+            ),
+
+            "raw_events": deepcopy(
+                raw_events
+            ),
+
+            "clean_events": deepcopy(
                 managed_data.get(
                     "clean_events",
                     [],
                 )
             ),
 
-            "analyses": analyses,
+            # --------------------------------------------------
+            # ANÁLISES
+            # --------------------------------------------------
 
-            "value_bets": value_bets,
+            "analyses": deepcopy(
+                analyses
+            ),
 
-            "best_match": best_match,
+            # --------------------------------------------------
+            # VALUE BETS
+            # --------------------------------------------------
+
+            "value_bets": deepcopy(
+                value_bets
+            ),
+
+            # --------------------------------------------------
+            # MELHORES OPORTUNIDADES
+            # --------------------------------------------------
+
+            "best_match": (
+                best_match
+            ),
 
             "best_value_bet": (
                 best_value_bet
             ),
 
-            "ai_data": ai_data,
+            # --------------------------------------------------
+            # IA
+            # --------------------------------------------------
+
+            "ai_data": deepcopy(
+                ai_data
+            ),
+
+            # --------------------------------------------------
+            # RESUMOS
+            # --------------------------------------------------
 
             "data_summary": (
-                managed_data.get(
-                    "summary",
-                    {},
-                )
+                data_summary
             ),
 
             "analysis_summary": (
                 analysis_summary
             ),
+
+            # --------------------------------------------------
+            # CONTADORES
+            # --------------------------------------------------
 
             "total_events": len(
                 events
@@ -661,6 +875,10 @@ class Pipeline:
 
         }
 
+        # ======================================================
+        # LOG FINAL
+        # ======================================================
+
         info(
             "Pipeline concluído: "
             f"{len(events)} eventos, "
@@ -670,5 +888,9 @@ class Pipeline:
 
         return result
 
+
+# ==========================================================
+# INSTÂNCIA GLOBAL
+# ==========================================================
 
 pipeline = Pipeline()
