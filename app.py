@@ -440,7 +440,7 @@ if st.session_state[
             0,
         )
 
-                summary = result.get(
+        summary = result.get(
             "analysis_summary",
             {},
         )
@@ -450,67 +450,88 @@ if st.session_state[
             0,
         )
 
-        col1, col2, col3, col4 = st.columns(4)
+        col1, col2, col3, col4 = st.columns(
+            4
+        )
 
         with col1:
+
             st.markdown(
                 f"""
                 <div class="metric-card">
+
                     <div class="metric-title">
                         Eventos
                     </div>
+
                     <div class="metric-value">
                         {total_events}
                     </div>
+
                 </div>
                 """,
                 unsafe_allow_html=True,
             )
 
         with col2:
+
             st.markdown(
                 f"""
                 <div class="metric-card">
+
                     <div class="metric-title">
                         Análises
                     </div>
+
                     <div class="metric-value">
                         {total_analyses}
                     </div>
+
                 </div>
                 """,
                 unsafe_allow_html=True,
             )
 
         with col3:
+
             st.markdown(
                 f"""
                 <div class="metric-card">
+
                     <div class="metric-title">
                         Value Bets
                     </div>
+
                     <div class="metric-value">
                         {total_value_bets}
                     </div>
+
                 </div>
                 """,
                 unsafe_allow_html=True,
             )
 
         with col4:
+
             st.markdown(
                 f"""
                 <div class="metric-card">
+
                     <div class="metric-title">
                         Índice médio
                     </div>
+
                     <div class="metric-value">
-                        {money_or_number(average_index)}
+                        {money_or_number(
+                            average_index
+                        )}
                     </div>
+
                 </div>
                 """,
                 unsafe_allow_html=True,
-     )
+            )
+         
  
         # ----------------------------------------------------
         # MELHOR OPORTUNIDADE
