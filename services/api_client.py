@@ -19,14 +19,7 @@ from typing import Any, Dict, List, Optional
 
 import requests
 
-from config.settings import (
-    API_KEY,
-    BASE_URL,
-    SPORT,
-    REGIONS,
-    MARKETS,
-    ODDS_FORMAT,
-)
+from config.settings import settings
 
 from modules.logger import info, error
 
@@ -60,42 +53,126 @@ class OddsAPIClient:
             str, Any
         ] = {}
 
-    # ==========================================================
-    # CONFIGURAÇÃO
-    # ==========================================================
-
-    def _request_params(
+    def _get_setting(
         self,
-    ) -> Dict[str, Any]:
+        name: str,
+        default: Any = None,
+    ) -> Any:
         """
-        Monta os parâmetros da requisição.
+        Obtém uma configuração da instância
+        global de Settings.
+
+        Aceita tanto atributos diretos
+        quanto propriedades/configurações
+        agrupadas.
         """
 
-        return {
+        try:
 
-            "apiKey": API_KEY,
+            value = getattr(
+                settings,
+                name,
+                default,
+            )
 
-            "regions": REGIONS,
+            if value is None:
+                return default
 
-            "markets": MARKETS,
+            return value
 
-            "oddsFormat": ODDS_FORMAT,
+        except Exception as exc:
 
-        }
+            error(
+                f"Erro ao obter configuração "
+                f"'{name}': {exc}"
+            )
 
-    # ==========================================================
-    # CACHE
-    # ==========================================================
+            return default
 
-    def _cache_is_valid(
-        self,
-    ) -> bool:
+    @property
+    def api_key(self) -> str:
         """
-        Verifica se o cache ainda está válido.
+        Retorna a chave da API.
+        """
+
+        return str(
+            self._get_setting(
+                "api_key",
+                "",
+            )
+        )
+
+    @property
+    def base_url(self) -> str:
+        """
+        Retorna a URL base da API.
+        """
+
+        return str(
+            self._get_setting(
+                "base_url",
+                "https://api.the-odds-api.com/v4",
+            )
+        ).rstrip("/")
+
+    @property
+    def sport(self) -> str:
+        """
+        Retorna o esporte padrão.
+        """
+
+        return str(
+            self._get_setting(
+                "sport",
+                "soccer",
+            )
+        )
+
+    @property
+    def regions(self) -> str:
+        """
+        Retorna as regiões das casas.
+        """
+
+        return str(
+            self._get_setting(
+                "regions",
+                "us",
+            )
+        )
+
+    @property
+    def markets(self) -> str:
+        """
+        Retorna os mercados consultados.
+        """
+
+        return str(
+            self._get_setting(
+                "markets",
+                "h2h",
+            )
+        )
+
+    @property
+    def odds_format(self) -> str:
+        """
+        Retorna o formato das odds.
+        """
+
+        return str(
+            self._get_setting(
+                "odds_format",
+                "decimal",
+            )
+        )
+
+    def _cache_valid(self) -> bool:
+        """
+        Verifica se o cache atual ainda é válido.
         """
 
         if self._cached_events is None:
-
             return False
 
         elapsed = (
@@ -103,220 +180,265 @@ class OddsAPIClient:
             - self._cache_timestamp
         )
 
-        return elapsed < self.cache_seconds
+        return (
+            elapsed
+            < self.cache_seconds
+        )
 
-    def clear_cache(
+    def _build_url(
         self,
-    ) -> None:
+        endpoint: str,
+    ) -> str:
         """
-        Limpa o cache local.
+        Monta a URL completa da requisição.
         """
 
-        self._cached_events = None
+        endpoint = endpoint.lstrip("/")
 
-        self._cache_timestamp = 0.0
+        return (
+            f"{self.base_url}/{endpoint}"
+        )
 
-    # ==========================================================
-    # REQUISIÇÃO
-    # ==========================================================
+    def _build_params(
+        self,
+        **extra_params: Any,
+    ) -> Dict[str, Any]:
+        """
+        Monta os parâmetros padrão
+        da The Odds API.
+        """
+
+        params: Dict[
+            str, Any
+        ] = {
+
+            "apiKey": self.api_key,
+
+            "regions": self.regions,
+
+            "markets": self.markets,
+
+            "oddsFormat": self.odds_format,
+        }
+
+        for key, value in extra_params.items():
+
+            if value is not None:
+
+                params[key] = value
+
+        return params
 
     def _request(
         self,
-    ) -> Optional[
-        requests.Response
-    ]:
+        endpoint: str,
+        params: Optional[
+            Dict[str, Any]
+        ] = None,
+    ) -> Any:
         """
-        Executa a requisição HTTP.
+        Executa uma requisição GET.
         """
 
-        url = (
-            f"{BASE_URL}/"
-            f"{SPORT}/odds"
+        url = self._build_url(
+            endpoint
         )
 
         try:
 
             response = self.session.get(
-
                 url,
-
-                params=self._request_params(),
-
+                params=params,
                 timeout=self.timeout,
-
             )
 
             self.last_response_info = {
 
-                "status_code": (
-                    response.status_code
-                ),
+                "status_code":
+                    response.status_code,
 
-                "remaining_requests": (
-                    response.headers.get(
-                        "x-requests-remaining"
-                    )
-                ),
+                "url":
+                    response.url,
 
-                "used_requests": (
-                    response.headers.get(
-                        "x-requests-used"
-                    )
-                ),
-
+                "headers":
+                    dict(response.headers),
             }
 
             response.raise_for_status()
 
-            return response
+            info(
+                "The Odds API respondeu "
+                f"com HTTP "
+                f"{response.status_code}"
+            )
 
-        except requests.Timeout:
+            return response.json()
+
+        except requests.exceptions.Timeout:
 
             error(
-                "The Odds API excedeu "
-                "o tempo limite."
+                "Timeout ao consultar "
+                "a The Odds API."
             )
 
-            return None
+            return []
 
-        except requests.HTTPError as exc:
-
-            status = (
-                exc.response.status_code
-                if exc.response is not None
-                else "desconhecido"
-            )
+        except requests.exceptions.HTTPError as exc:
 
             error(
                 "Erro HTTP na The Odds API: "
-                f"{status}"
+                f"{exc}"
             )
 
-            return None
+            return []
 
-        except requests.RequestException as exc:
+        except requests.exceptions.RequestException as exc:
 
             error(
-                "Erro de comunicação com "
+                "Erro de conexão com "
                 f"a The Odds API: {exc}"
             )
 
-            return None
+            return []
+
+        except ValueError as exc:
+
+            error(
+                "Resposta JSON inválida "
+                f"da The Odds API: {exc}"
+            )
+
+            return []
 
         except Exception as exc:
 
             error(
-                "Erro inesperado na API: "
-                f"{exc}"
+                "Erro inesperado ao consultar "
+                f"a The Odds API: {exc}"
             )
 
-            return None
-
-    # ==========================================================
-    # EVENTOS
-    # ==========================================================
+            return []
 
     def get_events(
         self,
+        sport: Optional[str] = None,
         force_refresh: bool = False,
-    ) -> List[Dict[str, Any]]:
+    ) -> List[
+        Dict[str, Any]
+    ]:
         """
-        Busca eventos e odds na The Odds API.
+        Busca eventos esportivos.
 
-        Se o cache estiver válido, evita uma nova
-        requisição desnecessária.
+        Utiliza cache para evitar chamadas
+        desnecessárias à API.
         """
 
         if (
             not force_refresh
-            and self._cache_is_valid()
+            and self._cache_valid()
         ):
 
             info(
-                "Eventos carregados "
+                "Retornando eventos "
                 "a partir do cache."
             )
 
-            return list(
-                self._cached_events or []
+            return (
+                self._cached_events
+                or []
             )
 
-        response = self._request()
+        selected_sport = (
+            sport
+            or self.sport
+        )
 
-        if response is None:
+        endpoint = (
+            f"sports/"
+            f"{selected_sport}/odds"
+        )
 
-            # Se a API falhar mas houver dados antigos,
-            # mantemos o último resultado disponível.
+        params = self._build_params()
 
-            if self._cached_events:
-
-                info(
-                    "API indisponível. "
-                    "Utilizando último cache válido."
-                )
-
-                return list(
-                    self._cached_events
-                )
-
-            return []
-
-        try:
-
-            data = response.json()
-
-        except ValueError:
-
-            error(
-                "A The Odds API retornou "
-                "uma resposta JSON inválida."
-            )
-
-            return []
+        events = self._request(
+            endpoint,
+            params,
+        )
 
         if not isinstance(
-            data,
+            events,
             list,
         ):
 
-            error(
-                "Formato inesperado retornado "
-                "pela The Odds API."
-            )
+            events = []
 
-            return []
-
-        events = [
-
-            item
-
-            for item in data
-
-            if isinstance(
-                item,
-                dict,
-            )
-
-        ]
-
-        self._cached_events = list(
-            events
-        )
+        self._cached_events = events
 
         self._cache_timestamp = (
             time.time()
         )
 
         info(
-            "The Odds API retornou "
-            f"{len(events)} eventos."
+            f"{len(events)} eventos "
+            "recebidos da The Odds API."
         )
 
         return events
 
-    # ==========================================================
-    # HEALTH CHECK
-    # ==========================================================
+    def get_sports(
+        self,
+    ) -> List[
+        Dict[str, Any]
+    ]:
+        """
+        Retorna a lista de esportes disponíveis.
+        """
+
+        data = self._request(
+            "sports",
+            {
+                "apiKey": self.api_key,
+            },
+        )
+
+        if not isinstance(
+            data,
+            list,
+        ):
+
+            return []
+
+        return data
+
+    def clear_cache(
+        self,
+    ) -> None:
+        """
+        Limpa o cache de eventos.
+        """
+
+        self._cached_events = None
+
+        self._cache_timestamp = 0.0
+
+        info(
+            "Cache da Odds API "
+            "limpo."
+        )
+
+    def get_last_response_info(
+        self,
+    ) -> Dict[
+        str, Any
+    ]:
+        """
+        Retorna informações da última
+        resposta HTTP.
+        """
+
+        return dict(
+            self.last_response_info
+        )
 
     def health_check(
         self,
@@ -325,46 +447,12 @@ class OddsAPIClient:
         Verifica se a API está respondendo.
         """
 
-        response = self._request()
+        data = self.get_sports()
 
-        return response is not None
-
-    # ==========================================================
-    # INFORMAÇÕES DA API
-    # ==========================================================
-
-    def api_status(
-        self,
-    ) -> Dict[str, Any]:
-        """
-        Retorna informações básicas da última requisição.
-        """
-
-        return {
-
-            "status_code": (
-                self.last_response_info.get(
-                    "status_code"
-                )
-            ),
-
-            "remaining_requests": (
-                self.last_response_info.get(
-                    "remaining_requests"
-                )
-            ),
-
-            "used_requests": (
-                self.last_response_info.get(
-                    "used_requests"
-                )
-            ),
-
-            "cached": (
-                self._cache_is_valid()
-            ),
-
-        }
+        return isinstance(
+            data,
+            list,
+        )
 
 
 api_client = OddsAPIClient()
