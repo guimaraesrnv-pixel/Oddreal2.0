@@ -64,13 +64,17 @@ class OddsAPIClient:
             configured_timeout = 15
 
         self.timeout = (
-            int(timeout)
-            if timeout is not None
-            else configured_timeout
+    timeout
+    if timeout is not None
+    else int(
+        getattr(
+            settings,
+            "request_timeout",
+            15,
         )
-
-        if self.timeout <= 0:
-            self.timeout = 15
+        or 15
+    )
+        )
 
         # Cache configurável sem depender de atributo
         # obrigatório no Settings.
