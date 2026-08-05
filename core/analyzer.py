@@ -1495,84 +1495,87 @@ class Analyzer:
 
         return values
 
-    # ==========================================================
-    # MELHOR OPORTUNIDADE
-    # ==========================================================
+# ==========================================================
+# MELHOR OPORTUNIDADE
+# ==========================================================
 
-    def best_opportunity(
-        self,
-        analyses: List[
-            Dict[str, Any
-        ],
-    ) -> Optional[
+def best_opportunity(
+    self,
+    analyses: List[
         Dict[str, Any]
-    ]:
+    ],
+) -> Optional[
+    Dict[str, Any]
+]:
 
-        if not isinstance(
-            analyses,
-            list,
-        ):
-            return None
+    if not isinstance(
+        analyses,
+        list,
+    ):
+        return None
 
-        # ------------------------------------------------------
-        # PRIMEIRO: EV POSITIVO
-        # ------------------------------------------------------
+    # ------------------------------------------------------
+    # SOMENTE ANÁLISES VÁLIDAS
+    # ------------------------------------------------------
 
-        positive = [
-
-            item
-
-            for item in analyses
-
-            if (
-                isinstance(
-                    item,
-                    dict,
-                )
-                and self._safe_float(
-                    item.get(
-                        "expected_value",
-                        0.0,
-                    )
-                ) > 0.0
+    positive = [
+        item
+        for item in analyses
+        if (
+            isinstance(
+                item,
+                dict,
             )
-        ]
-
-        if not positive:
-            return None
-
-        # ------------------------------------------------------
-        # MELHOR OPORTUNIDADE
-        #
-        # EV possui prioridade.
-        #
-        # O índice serve como critério de desempate
-        # e qualidade complementar.
-        # ------------------------------------------------------
-
-        return max(
-            positive,
-            key=lambda item: (
-                self._safe_float(
-                    item.get(
-                        "expected_value",
-                        0.0,
-                    )
-                ),
-                self._safe_float(
-                    item.get(
-                        "oddreal_index",
-                        0.0,
-                    )
-                ),
-                self._safe_float(
-                    item.get(
-                        "probability",
-                        0.0,
-                    )
-                ),
-            ),
+            and self._safe_float(
+                item.get(
+                    "expected_value",
+                    0.0,
+                )
+            ) > 0.0
         )
+    ]
+
+    # Nenhuma oportunidade com EV positivo
+    if not positive:
+        return None
+
+    # ------------------------------------------------------
+    # MELHOR OPORTUNIDADE
+    # ------------------------------------------------------
+    #
+    # Prioridade:
+    #
+    # 1. EV
+    # 2. Índice OddReal
+    # 3. Probabilidade
+    #
+    # Assim o sistema não escolhe uma odd
+    # simplesmente por ser mais alta.
+    # ------------------------------------------------------
+
+    return max(
+        positive,
+        key=lambda item: (
+            self._safe_float(
+                item.get(
+                    "expected_value",
+                    0.0,
+                )
+            ),
+            self._safe_float(
+                item.get(
+                    "oddreal_index",
+                    0.0,
+                )
+            ),
+            self._safe_float(
+                item.get(
+                    "probability",
+                    0.0,
+                )
+            ),
+        ),
+    )
 
     # ==========================================================
     # MELHOR VALUE BET
