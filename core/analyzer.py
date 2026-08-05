@@ -373,178 +373,121 @@ class Analyzer:
     # PROBABILIDADE DE MERCADO
     # ==========================================================
 
-    def _calculate_market_probability(
-        self,
-        event: Dict[str, Any],
-        selected_market: str,
-        selected_outcome: str,
-    ) -> float:
-        """
-        Calcula a probabilidade de mercado normalizada.
+    def _calculate_fair_probability(
+    self,
+    event: Dict[str, Any],
+    selected_market: str,
+    selected_outcome: str,
+ ) -> float:
+    """
+    Calcula uma probabilidade de mercado ajustada pela margem.
 
-        Para cada casa:
+    Para cada bookmaker:
+    1. coleta todas as seleções do mesmo mercado;
+    2. converte odds em probabilidades implícitas;
+    3. normaliza as probabilidades para remover o overround;
+    4. obtém a probabilidade justa da seleção escolhida.
 
-            p_i = 1 / odd_i
+    Depois calcula a média entre os bookmakers válidos.
 
-        A soma dessas probabilidades normalmente passa de 100%
-        devido à margem da casa.
+    Esta NÃO é uma previsão estatística independente.
+    É uma estimativa baseada no consenso do mercado.
+    """
 
-        Então normalizamos:
+    bookmakers = event.get("bookmakers", [])
 
-            p_normalizada =
-                p_selecao / soma_das_probabilidades
+    if not isinstance(bookmakers, list):
+        return 0.0
 
-        Finalmente fazemos a média das probabilidades
-        normalizadas entre as casas.
+    probabilities = []
 
-        Essa probabilidade é independente da melhor odd.
-        """
+    for bookmaker in bookmakers:
 
-        bookmakers = event.get(
-            "bookmakers",
-            [],
-        )
+        if not isinstance(bookmaker, dict):
+            continue
 
-        if not isinstance(
-            bookmakers,
-            list,
-        ):
-            return 0.0
+        markets = bookmaker.get("markets", [])
 
-        bookmaker_probabilities: List[
-            float
-        ] = []
+        if not isinstance(markets, list):
+            continue
 
-        for bookmaker in bookmakers:
+        for market in markets:
 
-            if not isinstance(
-                bookmaker,
-                dict,
-            ):
+            if not isinstance(market, dict):
                 continue
 
-            markets = bookmaker.get(
-                "markets",
-                [],
-            )
+            market_key = str(
+                market.get("key", "")
+            ).strip()
 
-            if not isinstance(
-                markets,
-                list,
-            ):
+            if market_key != selected_market:
                 continue
 
-            for market in markets:
+            outcomes = market.get("outcomes", [])
 
-                if not isinstance(
-                    market,
-                    dict,
-                ):
+            if not isinstance(outcomes, list):
+                continue
+
+            normalized = []
+
+            for outcome in outcomes:
+
+                if not isinstance(outcome, dict):
                     continue
 
-                market_name = str(
-                    market.get(
-                        "key",
-                        "",
-                    )
+                name = str(
+                    outcome.get("name", "")
                 ).strip()
 
-                if (
-                    selected_market
-                    and market_name
-                    != selected_market
-                ):
-                    continue
-
-                outcomes = market.get(
-                    "outcomes",
-                    [],
+                odd = self._safe_float(
+                    outcome.get("price", 0)
                 )
 
-                if not isinstance(
-                    outcomes,
-                    list,
-                ):
+                if odd <= 0:
                     continue
 
-                implied: Dict[
-                    str,
-                    float
-                ] = {}
-
-                for outcome in outcomes:
-
-                    if not isinstance(
-                        outcome,
-                        dict,
-                    ):
-                        continue
-
-                    name = str(
-                        outcome.get(
-                            "name",
-                            "",
-                        )
-                    ).strip()
-
-                    odd = self._safe_float(
-                        outcome.get(
-                            "price",
-                            0,
-                        )
-                    )
-
-                    if (
-                        not name
-                        or odd <= 1.0
-                    ):
-                        continue
-
-                    implied[name] = (
-                        1.0 / odd
-                    )
-
-                if (
-                    selected_outcome
-                    not in implied
-                ):
-                    continue
-
-                total_probability = sum(
-                    implied.values()
+                normalized.append(
+                    {
+                        "name": name,
+                        "odd": odd,
+                        "probability": 1.0 / odd,
+                    }
                 )
 
-                if total_probability <= 0:
-                    continue
+            if not normalized:
+                continue
 
-                normalized = (
-                    implied[
-                        selected_outcome
-                    ]
-                    / total_probability
-                )
-
-                bookmaker_probabilities.append(
-                    normalized * 100.0
-                )
-
-                # Uma combinação de outcomes
-                # de um mesmo mercado já foi processada.
-                break
-
-        if not bookmaker_probabilities:
-
-            return 0.0
-
-        return round(
-            sum(
-                bookmaker_probabilities
+            total_probability = sum(
+                item["probability"]
+                for item in normalized
             )
-            / len(
-                bookmaker_probabilities
-            ),
-            4,
-        )
+
+            if total_probability <= 0:
+                continue
+
+            for item in normalized:
+
+                if item["name"] == selected_outcome:
+
+                    fair_probability = (
+                        item["probability"]
+                        / total_probability
+                    ) * 100.0
+
+                    probabilities.append(
+                        fair_probability
+                    )
+
+                    break
+
+    if not probabilities:
+        return 0.0
+
+    return round(
+        sum(probabilities)
+        / len(probabilities),
+        4,
+    )
 
     # ==========================================================
     # MÉDIA DE MERCADO
