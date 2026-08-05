@@ -1,21 +1,29 @@
 """
 OddReal 2.0
-Gerenciador de Dados
+Data Manager
 
-Responsável por:
+Camada responsável por receber os dados da API,
+limpar, validar, normalizar e preparar os eventos
+para o Core Analyzer.
 
-- Receber dados da API;
-- Validar eventos;
-- Limpar estruturas inválidas;
-- Padronizar informações;
-- Preservar dados brutos;
-- Preparar dados para análise;
-- Preparar dados para histórico;
-- Preparar dados para a IA;
-- Fornecer estatísticas básicas do conjunto coletado.
+Fluxo:
 
-Este módulo NÃO calcula odds nem Value Bets.
-Essas responsabilidades permanecem no OddsEngine.
+The Odds API
+    ↓
+DataManager
+    ↓
+bookmakers autorizados
+    ↓
+market_odds normalizado
+    ↓
+Core Analyzer
+
+Este módulo NÃO:
+- calcula EV;
+- calcula Value Bet;
+- calcula Índice OddReal;
+- utiliza IA;
+- utiliza Streamlit.
 """
 
 from __future__ import annotations
@@ -24,12 +32,18 @@ from copy import deepcopy
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
+from config.bookmakers import (
+    ALLOWED_BOOKMAKERS,
+    normalize_bookmaker_name,
+    bookmaker_display_name,
+)
+
 from modules.logger import info, error
 
 
 class DataManager:
     """
-    Camada responsável pelo ciclo de vida dos dados.
+    Gerenciador central dos dados recebidos da API.
     """
 
     def __init__(self) -> None:
@@ -56,10 +70,6 @@ class DataManager:
 
     @staticmethod
     def _now_iso() -> str:
-        """
-        Retorna timestamp UTC em formato ISO.
-        """
-
         return datetime.now(
             timezone.utc
         ).isoformat()
@@ -69,21 +79,21 @@ class DataManager:
         value: Any,
         default: str = "",
     ) -> str:
-        """
-        Converte valores textuais com segurança.
-        """
 
         if value is None:
-
             return default
 
-        value = str(
-            value
-        ).strip()
+        try:
+            result = str(
+                value
+            ).strip()
+
+        except Exception:
+            return default
 
         return (
-            value
-            if value
+            result
+            if result
             else default
         )
 
@@ -92,26 +102,427 @@ class DataManager:
         value: Any,
         default: Optional[float] = None,
     ) -> Optional[float]:
-        """
-        Converte um valor para float.
-        """
 
         if value is None:
-
             return default
 
         try:
-
-            return float(
+            result = float(
                 value
             )
+
+            if result != result:
+                return default
+
+            if result in (
+                float("inf"),
+                float("-inf"),
+            ):
+                return default
+
+            return result
 
         except (
             TypeError,
             ValueError,
         ):
-
             return default
+
+    # ==========================================================
+    # BOOKMAKER
+    # ==========================================================
+
+    @staticmethod
+    def _normalize_bookmaker(
+        bookmaker: Dict[str, Any],
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Normaliza um bookmaker da The Odds API.
+
+        Retorna None quando a casa não está
+        na whitelist do OddReal.
+        """
+
+        if not isinstance(
+            bookmaker,
+            dict,
+        ):
+            return None
+
+        raw_key = DataManager._safe_string(
+            bookmaker.get(
+                "key"
+            )
+        )
+
+        raw_title = DataManager._safe_string(
+            bookmaker.get(
+                "title"
+            )
+        )
+
+        # ------------------------------------------------------
+        # Tentamos primeiro a key.
+        # Depois o title.
+        # ------------------------------------------------------
+
+        normalized = ""
+
+        if raw_key:
+
+            try:
+                normalized = (
+                    normalize_bookmaker_name(
+                        raw_key
+                    )
+                    or ""
+                )
+            except Exception:
+                normalized = ""
+
+        if (
+            not normalized
+            and raw_title
+        ):
+
+            try:
+                normalized = (
+                    normalize_bookmaker_name(
+                        raw_title
+                    )
+                    or ""
+                )
+            except Exception:
+                normalized = ""
+
+        normalized = (
+            DataManager._safe_string(
+                normalized
+            )
+        )
+
+        # ------------------------------------------------------
+        # Verificação da whitelist
+        # ------------------------------------------------------
+
+        allowed = False
+
+        if normalized in ALLOWED_BOOKMAKERS:
+            allowed = True
+
+        # Compatibilidade caso o normalizador
+        # retorne outra forma da key.
+        if raw_key in ALLOWED_BOOKMAKERS:
+            normalized = raw_key
+            allowed = True
+
+        if not allowed:
+            return None
+
+        # ------------------------------------------------------
+        # Nome para exibição
+        # ------------------------------------------------------
+
+        display_name = raw_title
+
+        try:
+
+            display_name = (
+                bookmaker_display_name(
+                    normalized
+                )
+                or raw_title
+                or normalized
+            )
+
+        except Exception:
+
+            display_name = (
+                raw_title
+                or normalized
+            )
+
+        return {
+            "key": normalized,
+            "title": DataManager._safe_string(
+                display_name,
+                normalized,
+            ),
+            "original_key": raw_key,
+            "original_title": raw_title,
+        }
+
+    # ==========================================================
+    # MERCADOS
+    # ==========================================================
+
+    def _extract_market_odds(
+        self,
+        bookmakers: List[
+            Dict[str, Any]
+        ],
+    ) -> List[
+        Dict[str, Any]
+    ]:
+        """
+        Converte a estrutura original da
+        The Odds API para a estrutura usada
+        pelo Core Analyzer.
+
+        Entrada esperada:
+
+        bookmakers
+            └── markets
+                 └── outcomes
+
+        Saída:
+
+        [
+            {
+                "market": "h2h",
+                "outcome": "Team A",
+                "bookmaker": "bet365",
+                "odd": 2.10
+            }
+        ]
+        """
+
+        market_odds: List[
+            Dict[str, Any]
+        ] = []
+
+        if not isinstance(
+            bookmakers,
+            list,
+        ):
+            return market_odds
+
+        for bookmaker in bookmakers:
+
+            normalized_bookmaker = (
+                self._normalize_bookmaker(
+                    bookmaker
+                )
+            )
+
+            if normalized_bookmaker is None:
+                continue
+
+            bookmaker_key = (
+                normalized_bookmaker[
+                    "key"
+                ]
+            )
+
+            bookmaker_title = (
+                normalized_bookmaker[
+                    "title"
+                ]
+            )
+
+            markets = bookmaker.get(
+                "markets",
+                [],
+            )
+
+            if not isinstance(
+                markets,
+                list,
+            ):
+                continue
+
+            for market in markets:
+
+                if not isinstance(
+                    market,
+                    dict,
+                ):
+                    continue
+
+                market_key = (
+                    self._safe_string(
+                        market.get(
+                            "key"
+                        )
+                    )
+                )
+
+                if not market_key:
+                    continue
+
+                # --------------------------------------------------
+                # ODDREAL trabalha inicialmente com os mercados
+                # principais.
+                # --------------------------------------------------
+
+                if market_key not in {
+                    "h2h",
+                    "totals",
+                    "spreads",
+                }:
+                    continue
+
+                outcomes = market.get(
+                    "outcomes",
+                    [],
+                )
+
+                if not isinstance(
+                    outcomes,
+                    list,
+                ):
+                    continue
+
+                for outcome in outcomes:
+
+                    if not isinstance(
+                        outcome,
+                        dict,
+                    ):
+                        continue
+
+                    outcome_name = (
+                        self._safe_string(
+                            outcome.get(
+                                "name"
+                            )
+                        )
+                    )
+
+                    if not outcome_name:
+                        continue
+
+                    price = self._safe_float(
+                        outcome.get(
+                            "price"
+                        )
+                    )
+
+                    if price is None:
+                        continue
+
+                    if price <= 1.0:
+                        continue
+
+                    record: Dict[
+                        str,
+                        Any
+                    ] = {
+                        "market": market_key,
+
+                        "outcome": outcome_name,
+
+                        "name": outcome_name,
+
+                        "bookmaker": bookmaker_title,
+
+                        "bookmaker_key":
+                            bookmaker_key,
+
+                        "odd": round(
+                            price,
+                            6,
+                        ),
+
+                        "price": round(
+                            price,
+                            6,
+                        ),
+                    }
+
+                    # --------------------------------------------------
+                    # Totals / spreads podem possuir ponto.
+                    # --------------------------------------------------
+
+                    if "point" in outcome:
+
+                        point = (
+                            self._safe_float(
+                                outcome.get(
+                                    "point"
+                                )
+                            )
+                        )
+
+                        if point is not None:
+
+                            record[
+                                "point"
+                            ] = point
+
+                    market_odds.append(
+                        record
+                    )
+
+        return market_odds
+
+    # ==========================================================
+    # BOOKMAKERS NORMALIZADOS
+    # ==========================================================
+
+    def _clean_bookmakers(
+        self,
+        bookmakers: List[
+            Dict[str, Any]
+        ],
+    ) -> List[
+        Dict[str, Any]
+    ]:
+        """
+        Mantém somente bookmakers autorizados.
+
+        A estrutura interna original é preservada,
+        mas os nomes principais são normalizados.
+        """
+
+        cleaned: List[
+            Dict[str, Any]
+        ] = []
+
+        if not isinstance(
+            bookmakers,
+            list,
+        ):
+            return cleaned
+
+        for bookmaker in bookmakers:
+
+            if not isinstance(
+                bookmaker,
+                dict,
+            ):
+                continue
+
+            normalized = (
+                self._normalize_bookmaker(
+                    bookmaker
+                )
+            )
+
+            if normalized is None:
+                continue
+
+            copy_bookmaker = deepcopy(
+                bookmaker
+            )
+
+            copy_bookmaker[
+                "_oddreal_key"
+            ] = normalized[
+                "key"
+            ]
+
+            copy_bookmaker[
+                "_oddreal_title"
+            ] = normalized[
+                "title"
+            ]
+
+            cleaned.append(
+                copy_bookmaker
+            )
+
+        return cleaned
 
     # ==========================================================
     # VALIDAÇÃO
@@ -121,15 +532,11 @@ class DataManager:
         self,
         event: Dict[str, Any],
     ) -> bool:
-        """
-        Verifica se o evento possui estrutura mínima.
-        """
 
         if not isinstance(
             event,
             dict,
         ):
-
             return False
 
         event_id = event.get(
@@ -145,42 +552,42 @@ class DataManager:
         )
 
         if not event_id:
-
             return False
 
         if not home_team:
-
             return False
 
         if not away_team:
-
             return False
 
         return True
 
     # ==========================================================
-    # LIMPEZA
+    # LIMPEZA DE EVENTO
     # ==========================================================
 
     def clean_event(
         self,
         event: Dict[str, Any],
-    ) -> Optional[Dict[str, Any]]:
+    ) -> Optional[
+        Dict[str, Any]
+    ]:
         """
-        Limpa e padroniza um evento.
-
-        Os dados originais são preservados sempre que possível.
+        Limpa um evento e cria market_odds.
         """
 
         if not self.validate_event(
             event
         ):
-
             return None
 
         cleaned = deepcopy(
             event
         )
+
+        # ------------------------------------------------------
+        # DADOS BÁSICOS
+        # ------------------------------------------------------
 
         cleaned["id"] = (
             self._safe_string(
@@ -204,7 +611,9 @@ class DataManager:
                 event.get(
                     "sport_title"
                 ),
-                cleaned["sport_key"],
+                cleaned[
+                    "sport_key"
+                ],
             )
         )
 
@@ -234,25 +643,83 @@ class DataManager:
             )
         )
 
-        bookmakers = event.get(
-            "bookmakers",
-            [],
+        # ------------------------------------------------------
+        # BOOKMAKERS
+        # ------------------------------------------------------
+
+        original_bookmakers = (
+            event.get(
+                "bookmakers",
+                [],
+            )
         )
 
         if not isinstance(
-            bookmakers,
+            original_bookmakers,
             list,
         ):
+            original_bookmakers = []
 
-            bookmakers = []
-
-        cleaned["bookmakers"] = (
-            bookmakers
+        cleaned_bookmakers = (
+            self._clean_bookmakers(
+                original_bookmakers
+            )
         )
 
-        cleaned["_processed_at"] = (
-            self._now_iso()
+        cleaned[
+            "bookmakers"
+        ] = cleaned_bookmakers
+
+        # ------------------------------------------------------
+        # MARKET ODDS
+        # ------------------------------------------------------
+
+        cleaned[
+            "market_odds"
+        ] = self._extract_market_odds(
+            original_bookmakers
         )
+
+        # ------------------------------------------------------
+        # INFORMAÇÕES ÚTEIS
+        # ------------------------------------------------------
+
+        cleaned[
+            "allowed_bookmakers"
+        ] = sorted(
+            set(
+                item[
+                    "_oddreal_key"
+                ]
+                for item
+                in cleaned_bookmakers
+                if isinstance(
+                    item,
+                    dict,
+                )
+                and item.get(
+                    "_oddreal_key"
+                )
+            )
+        )
+
+        cleaned[
+            "bookmaker_count"
+        ] = len(
+            cleaned_bookmakers
+        )
+
+        cleaned[
+            "market_odds_count"
+        ] = len(
+            cleaned[
+                "market_odds"
+            ]
+        )
+
+        cleaned[
+            "_processed_at"
+        ] = self._now_iso()
 
         return cleaned
 
@@ -262,17 +729,17 @@ class DataManager:
 
     def clean_events(
         self,
-        events: List[Dict[str, Any]],
-    ) -> List[Dict[str, Any]]:
-        """
-        Limpa uma coleção de eventos.
-        """
+        events: List[
+            Dict[str, Any]
+        ],
+    ) -> List[
+        Dict[str, Any]
+    ]:
 
         if not isinstance(
             events,
             list,
         ):
-
             return []
 
         cleaned_events: List[
@@ -283,8 +750,10 @@ class DataManager:
 
             try:
 
-                cleaned = self.clean_event(
-                    event
+                cleaned = (
+                    self.clean_event(
+                        event
+                    )
                 )
 
                 if cleaned is not None:
@@ -318,14 +787,17 @@ class DataManager:
 
     def prepare_for_analysis(
         self,
-        events: List[Dict[str, Any]],
-    ) -> List[Dict[str, Any]]:
+        events: List[
+            Dict[str, Any]
+        ],
+    ) -> List[
+        Dict[str, Any]
+    ]:
         """
-        Prepara os eventos para o Pipeline.
+        Só envia ao Analyzer eventos que possuem:
 
-        Neste estágio não fazemos cálculos de odds.
-        Apenas garantimos que os dados fundamentais
-        estejam disponíveis.
+        - bookmaker autorizado;
+        - market_odds válidos.
         """
 
         cleaned_events = (
@@ -345,8 +817,15 @@ class DataManager:
                 [],
             )
 
-            if not bookmakers:
+            market_odds = event.get(
+                "market_odds",
+                [],
+            )
 
+            if not bookmakers:
+                continue
+
+            if not market_odds:
                 continue
 
             prepared.append(
@@ -359,6 +838,26 @@ class DataManager:
             "para análise."
         )
 
+        # ------------------------------------------------------
+        # Diagnóstico
+        # ------------------------------------------------------
+
+        total_market_odds = sum(
+            len(
+                event.get(
+                    "market_odds",
+                    [],
+                )
+            )
+            for event in prepared
+        )
+
+        info(
+            "DataManager encontrou "
+            f"{total_market_odds} registros "
+            "de odds para análise."
+        )
+
         return prepared
 
     # ==========================================================
@@ -367,20 +866,17 @@ class DataManager:
 
     def prepare_for_ai(
         self,
-        analyses: List[Dict[str, Any]],
-    ) -> List[Dict[str, Any]]:
-        """
-        Cria uma versão enxuta dos dados para a IA.
-
-        Evita enviar informações desnecessárias e mantém
-        os indicadores fundamentais da análise.
-        """
+        analyses: List[
+            Dict[str, Any]
+        ],
+    ) -> List[
+        Dict[str, Any]
+    ]:
 
         if not isinstance(
             analyses,
             list,
         ):
-
             return []
 
         ai_data: List[
@@ -393,66 +889,93 @@ class DataManager:
                 analysis,
                 dict,
             ):
-
                 continue
 
             ai_data.append(
                 {
-                    "event_id": analysis.get(
-                        "id"
-                    ),
-
-                    "sport": analysis.get(
-                        "sport_title",
+                    "event_id":
                         analysis.get(
-                            "sport_key"
+                            "id"
                         ),
-                    ),
 
-                    "home_team": analysis.get(
-                        "home_team"
-                    ),
+                    "sport":
+                        analysis.get(
+                            "sport_title",
+                            analysis.get(
+                                "sport_key"
+                            ),
+                        ),
 
-                    "away_team": analysis.get(
-                        "away_team"
-                    ),
+                    "home_team":
+                        analysis.get(
+                            "home_team"
+                        ),
 
-                    "odd": analysis.get(
-                        "odd"
-                    ),
+                    "away_team":
+                        analysis.get(
+                            "away_team"
+                        ),
 
-                    "probability": analysis.get(
-                        "probability"
-                    ),
+                    "market":
+                        analysis.get(
+                            "market"
+                        ),
 
-                    "expected_value": analysis.get(
-                        "expected_value"
-                    ),
+                    "outcome":
+                        analysis.get(
+                            "outcome"
+                        ),
 
-                    "oddreal_index": analysis.get(
-                        "oddreal_index"
-                    ),
+                    "bookmaker":
+                        analysis.get(
+                            "bookmaker"
+                        ),
 
-                    "confidence_level": analysis.get(
-                        "confidence_level"
-                    ),
+                    "odd":
+                        analysis.get(
+                            "odd"
+                        ),
 
-                    "average_odd": analysis.get(
-                        "average_odd"
-                    ),
+                    "probability":
+                        analysis.get(
+                            "probability"
+                        ),
 
-                    "market_variation": analysis.get(
-                        "market_variation"
-                    ),
+                    "expected_value":
+                        analysis.get(
+                            "expected_value"
+                        ),
 
-                    "risk": analysis.get(
-                        "risk"
-                    ),
+                    "oddreal_index":
+                        analysis.get(
+                            "oddreal_index"
+                        ),
 
-                    "is_value_bet": analysis.get(
-                        "is_value_bet",
-                        False,
-                    ),
+                    "confidence_level":
+                        analysis.get(
+                            "confidence_level"
+                        ),
+
+                    "average_odd":
+                        analysis.get(
+                            "average_odd"
+                        ),
+
+                    "market_variation":
+                        analysis.get(
+                            "market_variation"
+                        ),
+
+                    "risk":
+                        analysis.get(
+                            "risk"
+                        ),
+
+                    "is_value_bet":
+                        analysis.get(
+                            "is_value_bet",
+                            False,
+                        ),
                 }
             )
 
@@ -465,12 +988,11 @@ class DataManager:
     def summary(
         self,
         events: Optional[
-            List[Dict[str, Any]]
+            List[
+                Dict[str, Any]
+            ]
         ] = None,
     ) -> Dict[str, Any]:
-        """
-        Retorna um resumo do conjunto atual.
-        """
 
         if events is None:
 
@@ -482,10 +1004,13 @@ class DataManager:
             events,
             list,
         ):
-
             events = []
 
         sports = set()
+
+        total_bookmakers = 0
+
+        total_market_odds = 0
 
         for event in events:
 
@@ -493,7 +1018,6 @@ class DataManager:
                 event,
                 dict,
             ):
-
                 continue
 
             sport = event.get(
@@ -504,29 +1028,48 @@ class DataManager:
             )
 
             if sport:
-
                 sports.add(
                     sport
                 )
 
+            total_bookmakers += len(
+                event.get(
+                    "bookmakers",
+                    [],
+                )
+            )
+
+            total_market_odds += len(
+                event.get(
+                    "market_odds",
+                    [],
+                )
+            )
+
         return {
 
-            "total_events": len(
-                events
-            ),
+            "total_events":
+                len(events),
 
-            "total_sports": len(
-                sports
-            ),
+            "total_sports":
+                len(sports),
 
-            "sports": sorted(
-                sports
-            ),
+            "sports":
+                sorted(sports),
 
-            "processed_at": (
-                self.last_processed_at
-            ),
+            "total_bookmakers":
+                total_bookmakers,
 
+            "total_market_odds":
+                total_market_odds,
+
+            "allowed_bookmakers":
+                sorted(
+                    ALLOWED_BOOKMAKERS
+                ),
+
+            "processed_at":
+                self.last_processed_at,
         }
 
     # ==========================================================
@@ -536,26 +1079,24 @@ class DataManager:
     def snapshot(
         self,
     ) -> Dict[str, Any]:
-        """
-        Retorna um snapshot seguro do estado atual.
-        """
 
         return {
 
-            "raw_events": deepcopy(
-                self.last_raw_events
-            ),
+            "raw_events":
+                deepcopy(
+                    self.last_raw_events
+                ),
 
-            "clean_events": deepcopy(
-                self.last_clean_events
-            ),
+            "clean_events":
+                deepcopy(
+                    self.last_clean_events
+                ),
 
-            "processed_at": (
-                self.last_processed_at
-            ),
+            "processed_at":
+                self.last_processed_at,
 
-            "summary": self.summary(),
-
+            "summary":
+                self.summary(),
         }
 
     # ==========================================================
@@ -565,9 +1106,6 @@ class DataManager:
     def reset(
         self,
     ) -> None:
-        """
-        Limpa o estado temporário do DataManager.
-        """
 
         self.last_raw_events = []
 
@@ -585,19 +1123,23 @@ class DataManager:
 
     def process(
         self,
-        events: List[Dict[str, Any]],
+        events: List[
+            Dict[str, Any]
+        ],
     ) -> Dict[str, Any]:
         """
-        Executa o ciclo básico de gerenciamento de dados.
+        Executa o ciclo completo.
 
-        Retorna dados brutos, limpos e preparados.
+        Mantém os dados brutos,
+        limpa os eventos,
+        cria market_odds
+        e prepara os eventos para análise.
         """
 
         if not isinstance(
             events,
             list,
         ):
-
             events = []
 
         self.last_raw_events = (
@@ -620,21 +1162,37 @@ class DataManager:
 
         return {
 
-            "raw_events": deepcopy(
-                events
-            ),
+            "raw_events":
+                deepcopy(
+                    events
+                ),
 
-            "clean_events": clean_events,
+            "clean_events":
+                deepcopy(
+                    clean_events
+                ),
 
-            "analysis_events": (
-                analysis_events
-            ),
+            "analysis_events":
+                deepcopy(
+                    analysis_events
+                ),
 
-            "summary": self.summary(
-                clean_events
-            ),
-
+            "summary":
+                self.summary(
+                    clean_events
+                ),
         }
 
 
+# ==========================================================
+# INSTÂNCIA GLOBAL
+# ==========================================================
+
 data_manager = DataManager()
+
+
+__all__ = [
+    "DataManager",
+    "data_manager",
+]
+                
