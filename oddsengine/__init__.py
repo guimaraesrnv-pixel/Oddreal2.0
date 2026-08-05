@@ -1,5 +1,3 @@
-
-"""
 """
 OddReal 2.0
 Odds Engine
