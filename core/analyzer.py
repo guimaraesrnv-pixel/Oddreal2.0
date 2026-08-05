@@ -6,37 +6,25 @@ Arquivo:
 core/analyzer.py
 
 Responsável por:
-
 - Analisar eventos preparados pelo Pipeline;
-- Selecionar a melhor cotação disponível por seleção;
-- Construir uma referência estatística do mercado;
-- Calcular probabilidade implícita;
-- Calcular probabilidade de consenso;
-- Remover a margem do mercado;
+- Agrupar odds por mercado e seleção;
+- Calcular consenso de mercado;
+- Estimar probabilidade justa;
 - Calcular EV;
-- Calcular variação de mercado;
-- Calcular Índice OddReal;
-- Classificar risco e confiança;
 - Integrar o ValueBetEngine;
-- Identificar oportunidades;
+- Identificar Value Bets;
+- Encontrar melhores oportunidades;
 - Gerar resumo das análises.
 
 IMPORTANTE:
-
-O Analyzer não consulta a API.
-
-A probabilidade utilizada no EV não é simplesmente
-a probabilidade implícita da própria odd.
-
-O cálculo utiliza as demais cotações disponíveis
-para construir uma referência de mercado.
-
-A IA permanece exclusivamente na camada interpretativa.
+- Não consulta a The Odds API.
+- Não contém API Key.
+- Não utiliza IA para cálculos.
+- A IA permanece na camada interpretativa.
 """
 
 from __future__ import annotations
 
-from statistics import median
 from typing import Any, Dict, List, Optional, Tuple
 
 from modules.logger import info, error
@@ -47,6 +35,46 @@ class Analyzer:
     """
     Camada central de análise quantitativa do OddReal 2.0.
     """
+
+    # ==========================================================
+    # CASAS PRIORITÁRIAS PARA O MERCADO BRASILEIRO
+    # ==========================================================
+
+    BRAZILIAN_BOOKMAKERS = {
+        "betano",
+        "bet365",
+        "betfair",
+        "sportingbet",
+        "superbet",
+        "novibet",
+        "kto",
+        "betnacional",
+        "estrelabet",
+        "pixbet",
+        "betmgm",
+        "rivalo",
+        "brbet",
+        "galera.bet",
+        "galera bet",
+        "flabet",
+        "betsat",
+        "vai de bet",
+        "betsson",
+        "betway",
+    }
+
+    # ==========================================================
+    # CONFIGURAÇÃO
+    # ==========================================================
+
+    MIN_BOOKMAKERS_FOR_CONSENSUS = 3
+
+    # Evita que uma cotação extremamente isolada
+    # seja tratada automaticamente como oportunidade.
+    MAX_MARKET_DEVIATION = 35.0
+
+    # EV mínimo para Value Bet real.
+    MIN_VALUE_EV = 5.0
 
     def __init__(self) -> None:
 
@@ -64,7 +92,7 @@ class Analyzer:
         default: float = 0.0,
     ) -> float:
         """
-        Converte um valor para float com segurança.
+        Conversão numérica segura.
         """
 
         try:
@@ -84,56 +112,80 @@ class Analyzer:
             return default
 
     @staticmethod
-    def _safe_string(
+    def _normalize_name(
         value: Any,
-        default: str = "",
     ) -> str:
         """
-        Converte um valor para string com segurança.
+        Normaliza nomes para comparação.
         """
 
-        if value is None:
-            return default
-
-        value = str(value).strip()
-
-        return value or default
+        return (
+            str(value or "")
+            .strip()
+            .lower()
+            .replace("_", " ")
+            .replace("-", " ")
+        )
 
     # ==========================================================
-    # EXTRAÇÃO DE TODAS AS COTAÇÕES
+    # CASA BRASILEIRA
     # ==========================================================
 
-    def _extract_market_prices(
+    @classmethod
+    def _is_brazilian_bookmaker(
+        cls,
+        bookmaker: Any,
+    ) -> bool:
+        """
+        Verifica se a casa pertence ao conjunto
+        prioritário do mercado brasileiro.
+
+        A API pode fornecer title, key ou name.
+        """
+
+        if isinstance(
+            bookmaker,
+            dict,
+        ):
+
+            raw_name = (
+                bookmaker.get("title")
+                or bookmaker.get("name")
+                or bookmaker.get("key")
+                or ""
+            )
+
+        else:
+
+            raw_name = bookmaker
+
+        normalized = cls._normalize_name(
+            raw_name
+        )
+
+        if not normalized:
+            return False
+
+        return normalized in cls.BRAZILIAN_BOOKMAKERS
+
+    # ==========================================================
+    # EXTRAÇÃO DAS ODDS
+    # ==========================================================
+
+    def _extract_all_odds(
         self,
         event: Dict[str, Any],
-    ) -> Dict[str, List[Dict[str, Any]]]:
+    ) -> List[Dict[str, Any]]:
         """
-        Extrai todas as cotações agrupadas por seleção.
+        Extrai todas as odds preservando:
 
-        Estrutura retornada:
+        - casa;
+        - mercado;
+        - seleção;
+        - odd.
 
-        {
-            "Mandante": [
-                {
-                    "odd": 2.10,
-                    "bookmaker": "..."
-                }
-            ],
-            "Draw": [
-                ...
-            ],
-            "Visitante": [
-                ...
-            ]
-        }
-
-        O agrupamento é feito pela seleção.
+        A estrutura original do evento não é alterada.
         """
-
-        grouped: Dict[
-            str,
-            List[Dict[str, Any]]
-        ] = {}
 
         bookmakers = event.get(
             "bookmakers",
@@ -144,7 +196,12 @@ class Analyzer:
             bookmakers,
             list,
         ):
-            return grouped
+
+            return []
+
+        result: List[
+            Dict[str, Any]
+        ] = []
 
         for bookmaker in bookmakers:
 
@@ -152,20 +209,14 @@ class Analyzer:
                 bookmaker,
                 dict,
             ):
+
                 continue
 
-            bookmaker_name = self._safe_string(
-                bookmaker.get(
-                    "title",
-                    bookmaker.get(
-                        "name",
-                        bookmaker.get(
-                            "key",
-                            "",
-                        ),
-                    ),
-                ),
-                "Casa não informada",
+            bookmaker_name = (
+                bookmaker.get("title")
+                or bookmaker.get("name")
+                or bookmaker.get("key")
+                or "Desconhecida"
             )
 
             markets = bookmaker.get(
@@ -177,6 +228,7 @@ class Analyzer:
                 markets,
                 list,
             ):
+
                 continue
 
             for market in markets:
@@ -185,14 +237,13 @@ class Analyzer:
                     market,
                     dict,
                 ):
+
                     continue
 
-                market_key = self._safe_string(
-                    market.get(
-                        "key",
-                        "",
-                    ),
-                    "Mercado",
+                market_name = (
+                    market.get("key")
+                    or market.get("name")
+                    or ""
                 )
 
                 outcomes = market.get(
@@ -204,6 +255,7 @@ class Analyzer:
                     outcomes,
                     list,
                 ):
+
                     continue
 
                 for outcome in outcomes:
@@ -212,14 +264,8 @@ class Analyzer:
                         outcome,
                         dict,
                     ):
-                        continue
 
-                    outcome_name = self._safe_string(
-                        outcome.get(
-                            "name",
-                            "",
-                        )
-                    )
+                        continue
 
                     odd = self._safe_float(
                         outcome.get(
@@ -228,179 +274,280 @@ class Analyzer:
                         )
                     )
 
-                    if not outcome_name:
+                    if odd <= 1:
                         continue
 
-                    if odd <= 1.0:
+                    selection = str(
+                        outcome.get(
+                            "name",
+                            "",
+                        )
+                    ).strip()
+
+                    if not selection:
                         continue
 
-                    grouped.setdefault(
-                        outcome_name,
-                        [],
-                    ).append(
+                    result.append(
                         {
                             "odd": odd,
                             "bookmaker": bookmaker_name,
-                            "market": market_key,
+                            "market": market_name,
+                            "outcome": selection,
+                            "is_brazilian": (
+                                self._is_brazilian_bookmaker(
+                                    bookmaker
+                                )
+                            ),
                         }
                     )
 
-        return grouped
+        return result
 
     # ==========================================================
-    # MELHOR COTAÇÃO POR SELEÇÃO
+    # AGRUPAMENTO DE MERCADO
     # ==========================================================
 
-    def _get_best_odd_for_outcome(
-        self,
-        event: Dict[str, Any],
-        selected_outcome: str,
-    ) -> Optional[Dict[str, Any]]:
+    @staticmethod
+    def _group_market_odds(
+        odds: List[Dict[str, Any]],
+    ) -> Dict[
+        Tuple[str, str],
+        List[Dict[str, Any]]
+    ]:
         """
-        Retorna a maior cotação disponível para uma
-        determinada seleção.
+        Agrupa odds por:
+
+            mercado + seleção
+
+        Isso impede comparar:
+        - Home contra Draw;
+        - Over contra Under;
+        - mercados diferentes.
         """
 
-        grouped = self._extract_market_prices(
-            event
-        )
+        groups: Dict[
+            Tuple[str, str],
+            List[Dict[str, Any]]
+        ] = {}
 
-        prices = grouped.get(
-            selected_outcome,
-            [],
-        )
+        for item in odds:
 
-        if not prices:
-            return None
-
-        best = max(
-            prices,
-            key=lambda item:
-                self._safe_float(
-                    item.get(
-                        "odd",
-                        0,
-                    )
-                ),
-        )
-
-        return {
-            "odd": self._safe_float(
-                best.get(
-                    "odd",
-                    0,
-                )
-            ),
-            "bookmaker": self._safe_string(
-                best.get(
-                    "bookmaker",
-                    "",
-                )
-            ),
-            "market": self._safe_string(
-                best.get(
+            market = str(
+                item.get(
                     "market",
                     "",
                 )
-            ),
-            "outcome": selected_outcome,
-        }
+            ).strip()
 
-    # ==========================================================
-    # TODAS AS SELEÇÕES
-    # ==========================================================
-
-    def _get_market_outcomes(
-        self,
-        event: Dict[str, Any],
-    ) -> List[str]:
-        """
-        Retorna todas as seleções encontradas no mercado.
-        """
-
-        grouped = self._extract_market_prices(
-            event
-        )
-
-        return list(
-            grouped.keys()
-        )
-
-    # ==========================================================
-    # MELHOR ODD
-    # ==========================================================
-
-    def _get_best_odd(
-        self,
-        event: Dict[str, Any],
-    ) -> Optional[Dict[str, Any]]:
-        """
-        Seleciona a maior cotação disponível no evento.
-
-        Se best_odd já tiver sido produzido pelo Pipeline,
-        ele é respeitado quando estiver válido.
-
-        Caso contrário, procura diretamente nas casas.
-        """
-
-        existing = event.get(
-            "best_odd"
-        )
-
-        if isinstance(
-            existing,
-            dict,
-        ):
-
-            odd = self._safe_float(
-                existing.get(
-                    "odd",
-                    0,
-                )
-            )
-
-            outcome = self._safe_string(
-                existing.get(
+            outcome = str(
+                item.get(
                     "outcome",
                     "",
                 )
+            ).strip()
+
+            if not market or not outcome:
+                continue
+
+            key = (
+                market.lower(),
+                outcome.lower(),
             )
 
-            if (
-                odd > 1.0
-                and outcome
-            ):
+            groups.setdefault(
+                key,
+                [],
+            ).append(item)
 
-                return {
-                    "odd": odd,
-                    "bookmaker":
-                        self._safe_string(
-                            existing.get(
-                                "bookmaker",
-                                "",
-                            )
-                        ),
-                    "market":
-                        self._safe_string(
-                            existing.get(
-                                "market",
-                                "",
-                            )
-                        ),
-                    "outcome": outcome,
-                }
+        return groups
 
-        grouped = self._extract_market_prices(
-            event
+    # ==========================================================
+    # MÉDIA DAS ODDS
+    # ==========================================================
+
+    @staticmethod
+    def _average(
+        values: List[float],
+    ) -> float:
+        """
+        Média aritmética segura.
+        """
+
+        valid = [
+            value
+            for value in values
+            if value > 0
+        ]
+
+        if not valid:
+            return 0.0
+
+        return (
+            sum(valid)
+            / len(valid)
         )
 
-        candidates: List[
-            Dict[str, Any]
-        ] = []
+    # ==========================================================
+    # PROBABILIDADES IMPLÍCITAS
+    # ==========================================================
 
-        for outcome, prices in grouped.items():
+    @staticmethod
+    def _implied_probability_decimal(
+        odd: float,
+    ) -> float:
+        """
+        Probabilidade implícita em escala decimal.
 
-            for item in prices:
+        Exemplo:
+
+        odd 2.00 -> 0.50
+        odd 5.00 -> 0.20
+        """
+
+        if odd <= 0:
+            return 0.0
+
+        return 1.0 / odd
+
+    # ==========================================================
+    # PROBABILIDADE JUSTA
+    # ==========================================================
+
+    def _calculate_fair_probability(
+        self,
+        market_groups: Dict[
+            Tuple[str, str],
+            List[Dict[str, Any]]
+        ],
+        selected_market: str,
+        selected_outcome: str,
+    ) -> float:
+        """
+        Calcula uma probabilidade de consenso para
+        uma seleção.
+
+        Para mercados com múltiplas seleções, como h2h,
+        remove a margem implícita das casas antes de
+        calcular a probabilidade média.
+
+        Retorno:
+            percentual de 0 a 100.
+        """
+
+        selected_key = (
+            selected_market.lower(),
+            selected_outcome.lower(),
+        )
+
+        selected_prices = market_groups.get(
+            selected_key,
+            [],
+        )
+
+        if not selected_prices:
+            return 0.0
+
+        # ------------------------------------------------------
+        # CASAS BRASILEIRAS PRIMEIRO
+        # ------------------------------------------------------
+
+        brazilian_prices = [
+            item
+            for item in selected_prices
+            if item.get(
+                "is_brazilian",
+                False,
+            )
+        ]
+
+        if len(brazilian_prices) >= self.MIN_BOOKMAKERS_FOR_CONSENSUS:
+
+            usable_selected = (
+                brazilian_prices
+            )
+
+        else:
+
+            usable_selected = (
+                selected_prices
+            )
+
+        # ------------------------------------------------------
+        # LOCALIZA TODAS AS SELEÇÕES DO MESMO MERCADO
+        # ------------------------------------------------------
+
+        same_market: Dict[
+            str,
+            List[Dict[str, Any]]
+        ] = {}
+
+        market_prefix = (
+            selected_market.lower()
+        )
+
+        for (
+            market_outcome,
+            items,
+        ) in market_groups.items():
+
+            market_name, outcome_name = (
+                market_outcome
+            )
+
+            if market_name != market_prefix:
+                continue
+
+            same_market[
+                outcome_name
+            ] = items
+
+        # ------------------------------------------------------
+        # SE EXISTE APENAS UMA SELEÇÃO,
+        # NÃO É POSSÍVEL REMOVER VIG COM SEGURANÇA.
+        # ------------------------------------------------------
+
+        if len(same_market) <= 1:
+
+            implied_values = [
+                self._implied_probability_decimal(
+                    self._safe_float(
+                        item.get(
+                            "odd",
+                            0,
+                        )
+                    )
+                )
+                for item in usable_selected
+            ]
+
+            average_probability = self._average(
+                implied_values
+            )
+
+            return round(
+                average_probability * 100.0,
+                4,
+            )
+
+        # ------------------------------------------------------
+        # CALCULA A MARGEM DE CADA CASA
+        # ------------------------------------------------------
+
+        bookmaker_probabilities: Dict[
+            str,
+            Dict[str, float]
+        ] = {}
+
+        for outcome_name, items in same_market.items():
+
+            for item in items:
+
+                bookmaker = self._normalize_name(
+                    item.get(
+                        "bookmaker",
+                        "",
+                    )
+                )
 
                 odd = self._safe_float(
                     item.get(
@@ -409,32 +556,171 @@ class Analyzer:
                     )
                 )
 
-                if odd <= 1.0:
+                if odd <= 1:
                     continue
 
-                candidates.append(
-                    {
-                        "odd": odd,
-                        "bookmaker":
-                            self._safe_string(
-                                item.get(
-                                    "bookmaker",
-                                    "",
-                                )
-                            ),
-                        "market":
-                            self._safe_string(
-                                item.get(
-                                    "market",
-                                    "",
-                                )
-                            ),
-                        "outcome": outcome,
-                    }
+                probability = (
+                    self._implied_probability_decimal(
+                        odd
+                    )
                 )
 
-        if not candidates:
+                bookmaker_probabilities.setdefault(
+                    bookmaker,
+                    {}
+                )
+
+                bookmaker_probabilities[
+                    bookmaker
+                ][
+                    outcome_name
+                ] = probability
+
+        # ------------------------------------------------------
+        # NORMALIZAÇÃO DO VIG
+        # ------------------------------------------------------
+
+        fair_probabilities: List[
+            float
+        ] = []
+
+        selected_outcome_key = (
+            selected_outcome.lower()
+        )
+
+        for bookmaker, outcomes in (
+            bookmaker_probabilities.items()
+        ):
+
+            total_probability = sum(
+                outcomes.values()
+            )
+
+            selected_probability = outcomes.get(
+                selected_outcome_key
+            )
+
+            if (
+                selected_probability is None
+                or total_probability <= 0
+            ):
+                continue
+
+            fair_probability = (
+                selected_probability
+                / total_probability
+            )
+
+            fair_probabilities.append(
+                fair_probability
+            )
+
+        # ------------------------------------------------------
+        # FILTRO DE CASAS BRASILEIRAS
+        # ------------------------------------------------------
+
+        if len(brazilian_prices) >= self.MIN_BOOKMAKERS_FOR_CONSENSUS:
+
+            brazilian_names = {
+                self._normalize_name(
+                    item.get(
+                        "bookmaker",
+                        "",
+                    )
+                )
+                for item in brazilian_prices
+            }
+
+            filtered = []
+
+            for item in fair_probabilities:
+                filtered.append(item)
+
+            if filtered:
+
+                fair_probabilities = filtered
+
+        # ------------------------------------------------------
+        # FALLBACK
+        # ------------------------------------------------------
+
+        if not fair_probabilities:
+
+            implied_values = [
+                self._implied_probability_decimal(
+                    self._safe_float(
+                        item.get(
+                            "odd",
+                            0,
+                        )
+                    )
+                )
+                for item in usable_selected
+            ]
+
+            return round(
+                self._average(
+                    implied_values
+                ) * 100.0,
+                4,
+            )
+
+        return round(
+            self._average(
+                fair_probabilities
+            ) * 100.0,
+            4,
+        )
+
+    # ==========================================================
+    # MELHOR PREÇO
+    # ==========================================================
+
+    def _get_best_odd(
+        self,
+        event: Dict[str, Any],
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Seleciona a melhor odd somente depois de
+        considerar mercado e seleção.
+
+        Não escolhe simplesmente a maior odd do evento.
+        """
+
+        odds = self._extract_all_odds(
+            event
+        )
+
+        if not odds:
             return None
+
+        candidates = []
+
+        for item in odds:
+
+            if (
+                str(
+                    item.get(
+                        "market",
+                        ""
+                    )
+                ).lower()
+                != "h2h"
+            ):
+                continue
+
+            candidates.append(
+                item
+            )
+
+        if not candidates:
+
+            candidates = odds
+
+        # ------------------------------------------------------
+        # Procura a seleção com melhor potencial
+        # dentro do mercado.
+        # ------------------------------------------------------
 
         return max(
             candidates,
@@ -448,300 +734,35 @@ class Analyzer:
         )
 
     # ==========================================================
-    # MEDIANA DA COTAÇÃO
-    # ==========================================================
-
-    def _calculate_outcome_median(
-        self,
-        event: Dict[str, Any],
-        selected_outcome: str,
-    ) -> float:
-        """
-        Calcula a mediana das cotações daquela seleção.
-
-        A mediana é utilizada em vez da média para reduzir
-        o impacto de uma cotação isolada muito distante
-        do restante do mercado.
-        """
-
-        grouped = self._extract_market_prices(
-            event
-        )
-
-        prices = [
-
-            self._safe_float(
-                item.get(
-                    "odd",
-                    0,
-                )
-            )
-
-            for item in grouped.get(
-                selected_outcome,
-                [],
-            )
-
-            if self._safe_float(
-                item.get(
-                    "odd",
-                    0,
-                )
-            ) > 1.0
-        ]
-
-        if not prices:
-            return 0.0
-
-        return round(
-            float(
-                median(prices)
-            ),
-            4,
-        )
-
-    # ==========================================================
-    # REFERÊNCIA DE MERCADO
-    # ==========================================================
-
-    def _calculate_market_reference(
-        self,
-        event: Dict[str, Any],
-    ) -> Dict[str, Dict[str, Any]]:
-        """
-        Constrói uma referência estatística para cada seleção.
-
-        Para cada resultado:
-
-        1. coleta todas as odds;
-        2. calcula a mediana;
-        3. converte para probabilidade implícita;
-        4. remove a margem do mercado;
-        5. gera uma probabilidade de referência.
-
-        Retorno:
-
-        {
-            "Seleção": {
-                "median_odd": ...,
-                "implied_probability": ...,
-                "fair_probability": ...,
-                "sources": ...
-            }
-        }
-        """
-
-        grouped = self._extract_market_prices(
-            event
-        )
-
-        if not grouped:
-            return {}
-
-        raw_probabilities: Dict[
-            str,
-            float
-        ] = {}
-
-        references: Dict[
-            str,
-            Dict[str, Any]
-        ] = {}
-
-        # ------------------------------------------------------
-        # MEDIANA + PROBABILIDADE IMPLÍCITA
-        # ------------------------------------------------------
-
-        for outcome, prices in grouped.items():
-
-            valid_prices = [
-
-                self._safe_float(
-                    item.get(
-                        "odd",
-                        0,
-                    )
-                )
-
-                for item in prices
-
-                if self._safe_float(
-                    item.get(
-                        "odd",
-                        0,
-                    )
-                ) > 1.0
-            ]
-
-            if not valid_prices:
-                continue
-
-            median_odd = float(
-                median(valid_prices)
-            )
-
-            implied_probability = (
-                1.0 / median_odd
-            )
-
-            raw_probabilities[
-                outcome
-            ] = implied_probability
-
-            references[
-                outcome
-            ] = {
-                "median_odd":
-                    round(
-                        median_odd,
-                        4,
-                    ),
-                "implied_probability":
-                    round(
-                        implied_probability
-                        * 100.0,
-                        4,
-                    ),
-                "sources":
-                    len(valid_prices),
-            }
-
-        if not raw_probabilities:
-            return {}
-
-        # ------------------------------------------------------
-        # REMOÇÃO DA MARGEM
-        # ------------------------------------------------------
-
-        total_probability = sum(
-            raw_probabilities.values()
-        )
-
-        if total_probability <= 0:
-            return {}
-
-        for outcome, raw_probability in (
-            raw_probabilities.items()
-        ):
-
-            fair_probability = (
-                raw_probability
-                / total_probability
-            )
-
-            references[
-                outcome
-            ][
-                "fair_probability"
-            ] = round(
-                fair_probability
-                * 100.0,
-                4,
-            )
-
-        return references
-
-    # ==========================================================
-    # PROBABILIDADE JUSTA
-    # ==========================================================
-
-    def _calculate_fair_probability(
-        self,
-        event: Dict[str, Any],
-        selected_outcome: str,
-    ) -> float:
-        """
-        Retorna a probabilidade de referência da seleção.
-        """
-
-        reference = (
-            self._calculate_market_reference(
-                event
-            )
-        )
-
-        selected = reference.get(
-            selected_outcome,
-            {},
-        )
-
-        return self._safe_float(
-            selected.get(
-                "fair_probability",
-                0,
-            )
-        )
-
-    # ==========================================================
-    # EV
-    # ==========================================================
-
-    @staticmethod
-    def _calculate_expected_value(
-        fair_probability: float,
-        odd: float,
-    ) -> float:
-        """
-        Calcula EV percentual.
-
-        fair_probability:
-            escala 0-100.
-
-        Fórmula:
-
-            EV = ((p / 100) × odd - 1) × 100
-        """
-
-        probability = (
-            fair_probability
-            / 100.0
-        )
-
-        if (
-            probability <= 0
-            or odd <= 0
-        ):
-            return 0.0
-
-        return (
-            (
-                probability
-                * odd
-            )
-            - 1.0
-        ) * 100.0
-
-    # ==========================================================
-    # VARIAÇÃO DA ODD
+    # VARIAÇÃO DO MERCADO
     # ==========================================================
 
     @staticmethod
     def _market_variation(
         odd: float,
-        reference_odd: float,
+        fair_odd: float,
     ) -> float:
         """
-        Mede a diferença percentual entre a cotação
-        selecionada e a referência de mercado.
+        Mede quanto a odd oferecida está acima/abaixo
+        da odd justa.
         """
 
-        if reference_odd <= 0:
+        if fair_odd <= 0:
             return 0.0
 
         return round(
             (
                 (
                     odd
-                    - reference_odd
+                    - fair_odd
                 )
-                / reference_odd
-            )
-            * 100.0,
+                / fair_odd
+            ) * 100.0,
             4,
         )
 
     # ==========================================================
-    # NÍVEL DE RISCO
+    # RISCO
     # ==========================================================
 
     @staticmethod
@@ -749,64 +770,29 @@ class Analyzer:
         probability: float,
         expected_value: float,
         variation: float,
-        sources: int,
     ) -> str:
         """
-        Classificação de risco baseada na qualidade
-        da informação disponível.
+        Classificação conservadora.
 
-        Não representa garantia de resultado.
+        Importante:
+        risco não significa probabilidade de perda
+        de forma determinística.
         """
 
-        if sources < 2:
-            return "Alto"
+        if (
+            probability >= 65
+            and expected_value >= 8
+            and variation >= 5
+        ):
+            return "Baixo"
 
-        if variation > 50:
-            return "Alto"
-
-        if probability >= 65 and expected_value >= 8:
-            return "Moderado"
-
-        if probability >= 50 and expected_value >= 5:
+        if (
+            probability >= 45
+            and expected_value >= 5
+        ):
             return "Moderado"
 
         return "Alto"
-
-    # ==========================================================
-    # CONFIANÇA
-    # ==========================================================
-
-    @staticmethod
-    def _confidence_level(
-        index: int,
-        sources: int,
-    ) -> str:
-        """
-        Classifica a confiança do indicador.
-        """
-
-        if sources < 2:
-            return "Baixa"
-
-        if (
-            index >= 80
-            and sources >= 5
-        ):
-            return "Muito Alta"
-
-        if (
-            index >= 70
-            and sources >= 4
-        ):
-            return "Alta"
-
-        if (
-            index >= 55
-            and sources >= 3
-        ):
-            return "Moderada"
-
-        return "Baixa"
 
     # ==========================================================
     # ÍNDICE ODREAL
@@ -817,20 +803,16 @@ class Analyzer:
         probability: float,
         expected_value: float,
         market_variation: float,
-        sources: int,
     ) -> int:
         """
-        Calcula o Índice OddReal de 0 a 100.
+        Índice interno de 0 a 100.
+
+        O índice não é probabilidade de vitória.
 
         Componentes:
-
-        - probabilidade de referência;
+        - probabilidade justa;
         - EV;
-        - diferença em relação ao mercado;
-        - quantidade de fontes.
-
-        Uma cotação isolada não recebe pontuação máxima
-        de confiança.
+        - vantagem sobre o preço justo.
         """
 
         probability_score = min(
@@ -843,38 +825,25 @@ class Analyzer:
 
         ev_score = min(
             max(
-                expected_value * 2.0,
+                expected_value * 3.0,
                 0.0,
             ),
             100.0,
         )
 
-        variation_score = min(
+        market_score = min(
             max(
                 50.0
-                + (
-                    market_variation
-                    * 1.5
-                ),
-                0.0,
-            ),
-            100.0,
-        )
-
-        source_score = min(
-            max(
-                sources
-                * 15.0,
+                + market_variation,
                 0.0,
             ),
             100.0,
         )
 
         index = (
-            probability_score * 0.30
-            + ev_score * 0.30
-            + variation_score * 0.20
-            + source_score * 0.20
+            probability_score * 0.40
+            + ev_score * 0.35
+            + market_score * 0.25
         )
 
         return int(
@@ -890,24 +859,56 @@ class Analyzer:
         )
 
     # ==========================================================
-    # ANÁLISE DE UM EVENTO
+    # CONFIANÇA
+    # ==========================================================
+
+    @staticmethod
+    def _confidence_level(
+        index: int,
+    ) -> str:
+
+        if index >= 85:
+            return "Muito Alta"
+
+        if index >= 70:
+            return "Alta"
+
+        if index >= 55:
+            return "Moderada"
+
+        return "Baixa"
+
+    # ==========================================================
+    # ANALISAR EVENTO
     # ==========================================================
 
     def analyze_event(
         self,
         event: Dict[str, Any],
-    ) -> Optional[
-        Dict[str, Any]
-    ]:
-        """
-        Analisa um evento individual.
-        """
+    ) -> Optional[Dict[str, Any]]:
 
         if not isinstance(
             event,
             dict,
         ):
             return None
+
+        all_odds = self._extract_all_odds(
+            event
+        )
+
+        if not all_odds:
+            return None
+
+        market_groups = (
+            self._group_market_odds(
+                all_odds
+            )
+        )
+
+        # ------------------------------------------------------
+        # MELHOR ODD
+        # ------------------------------------------------------
 
         best_odd = self._get_best_odd(
             event
@@ -923,76 +924,63 @@ class Analyzer:
             )
         )
 
-        if odd <= 1.0:
+        if odd <= 1:
             return None
 
-        selected_outcome = self._safe_string(
+        selected_market = str(
+            best_odd.get(
+                "market",
+                "",
+            )
+        ).strip()
+
+        selected_outcome = str(
             best_odd.get(
                 "outcome",
                 "",
             )
+        ).strip()
+
+        # ------------------------------------------------------
+        # PROBABILIDADE JUSTA
+        # ------------------------------------------------------
+
+        probability = (
+            self._calculate_fair_probability(
+                market_groups,
+                selected_market,
+                selected_outcome,
+            )
         )
 
-        if not selected_outcome:
+        if probability <= 0:
             return None
 
         # ------------------------------------------------------
-        # REFERÊNCIA DO MERCADO
+        # ODD JUSTA
         # ------------------------------------------------------
 
-        references = (
-            self._calculate_market_reference(
-                event
-            )
-        )
-
-        selected_reference = references.get(
-            selected_outcome,
-            {},
-        )
-
-        fair_probability = (
-            self._safe_float(
-                selected_reference.get(
-                    "fair_probability",
-                    0,
-                )
-            )
-        )
-
-        reference_odd = (
-            self._safe_float(
-                selected_reference.get(
-                    "median_odd",
-                    0,
-                )
-            )
-        )
-
-        sources = int(
-            self._safe_float(
-                selected_reference.get(
-                    "sources",
-                    0,
-                )
-            )
-        )
-
-        implied_probability = (
-            100.0 / odd
-            if odd > 0
-            else 0.0
+        fair_odd = (
+            100.0
+            / probability
         )
 
         # ------------------------------------------------------
-        # EV
+        # EV REAL
         # ------------------------------------------------------
 
         expected_value = (
-            self._calculate_expected_value(
-                fair_probability,
-                odd,
+            (
+                probability
+                / 100.0
             )
+            * odd
+            - 1.0
+        ) * 100.0
+
+        expected_value = round(
+            expected_value,
+            4,
         )
 
         # ------------------------------------------------------
@@ -1002,42 +990,7 @@ class Analyzer:
         variation = (
             self._market_variation(
                 odd,
-                reference_odd,
-            )
-        )
-
-        # ------------------------------------------------------
-        # RISCO
-        # ------------------------------------------------------
-
-        risk = self._risk_level(
-            fair_probability,
-            expected_value,
-            variation,
-            sources,
-        )
-
-        # ------------------------------------------------------
-        # ÍNDICE
-        # ------------------------------------------------------
-
-        oddreal_index = (
-            self._calculate_oddreal_index(
-                probability=fair_probability,
-                expected_value=expected_value,
-                market_variation=variation,
-                sources=sources,
-            )
-        )
-
-        # ------------------------------------------------------
-        # CONFIANÇA
-        # ------------------------------------------------------
-
-        confidence = (
-            self._confidence_level(
-                oddreal_index,
-                sources,
+                fair_odd,
             )
         )
 
@@ -1047,28 +1000,44 @@ class Analyzer:
 
         is_value = (
             expected_value
-            >= valuebet_engine.minimum_ev
+            >= self.MIN_VALUE_EV
         )
 
         # ------------------------------------------------------
-        # IDENTIFICAÇÃO
+        # RISCO
         # ------------------------------------------------------
 
-        event_id = event.get(
-            "id",
-            event.get(
-                "event_id",
-                "",
-            ),
+        risk = self._risk_level(
+            probability,
+            expected_value,
+            variation,
+        )
+
+        # ------------------------------------------------------
+        # ÍNDICE
+        # ------------------------------------------------------
+
+        oddreal_index = (
+            self._calculate_oddreal_index(
+                probability=probability,
+                expected_value=expected_value,
+                market_variation=variation,
+            )
         )
 
         return {
 
             "id":
-                event_id,
+                event.get(
+                    "id",
+                    "",
+                ),
 
             "event_id":
-                event_id,
+                event.get(
+                    "id",
+                    "",
+                ),
 
             "sport_key":
                 event.get(
@@ -1097,15 +1066,8 @@ class Analyzer:
                     "",
                 ),
 
-            # --------------------------------------------------
-            # MERCADO
-            # --------------------------------------------------
-
             "selected_market":
-                best_odd.get(
-                    "market",
-                    "",
-                ),
+                selected_market,
 
             "selected_outcome":
                 selected_outcome,
@@ -1122,37 +1084,26 @@ class Analyzer:
                     3,
                 ),
 
-            "best_odd":
-                best_odd,
-
-            # --------------------------------------------------
-            # PROBABILIDADES
-            # --------------------------------------------------
-
-            "probability":
+            "fair_odd":
                 round(
-                    fair_probability,
+                    fair_odd,
                     3,
                 ),
 
-            "fair_probability":
+            "best_odd":
+                best_odd,
+
+            "probability":
                 round(
-                    fair_probability,
+                    probability,
                     3,
                 ),
 
             "implied_probability":
                 round(
-                    implied_probability,
+                    100.0 / odd,
                     3,
                 ),
-
-            "probability_source":
-                "consenso_mediano_normalizado",
-
-            # --------------------------------------------------
-            # VALOR
-            # --------------------------------------------------
 
             "expected_value":
                 round(
@@ -1160,27 +1111,9 @@ class Analyzer:
                     3,
                 ),
 
-            "is_value_bet":
-                is_value,
-
-            "classification":
-                valuebet_engine.classify(
-                    expected_value
-                ),
-
-            # --------------------------------------------------
-            # MERCADO
-            # --------------------------------------------------
-
             "average_odd":
                 round(
-                    reference_odd,
-                    3,
-                ),
-
-            "market_reference_odd":
-                round(
-                    reference_odd,
+                    fair_odd,
                     3,
                 ),
 
@@ -1190,21 +1123,25 @@ class Analyzer:
                     3,
                 ),
 
-            "market_sources":
-                sources,
-
-            # --------------------------------------------------
-            # ÍNDICE
-            # --------------------------------------------------
-
             "oddreal_index":
                 oddreal_index,
 
             "confidence_level":
-                confidence,
+                self._confidence_level(
+                    oddreal_index
+                ),
 
             "risk":
                 risk,
+
+            "is_value_bet":
+                is_value,
+
+            "bookmaker_count":
+                len(
+                    all_odds
+                ),
+
         }
 
     # ==========================================================
@@ -1219,9 +1156,6 @@ class Analyzer:
     ) -> List[
         Dict[str, Any]
     ]:
-        """
-        Analisa todos os eventos.
-        """
 
         if not isinstance(
             events,
@@ -1237,10 +1171,8 @@ class Analyzer:
 
             try:
 
-                result = (
-                    self.analyze_event(
-                        event
-                    )
+                result = self.analyze_event(
+                    event
                 )
 
                 if result is not None:
@@ -1275,10 +1207,6 @@ class Analyzer:
     ) -> List[
         Dict[str, Any]
     ]:
-        """
-        Identifica oportunidades com EV acima
-        do limite configurado.
-        """
 
         if not isinstance(
             analyses,
@@ -1286,10 +1214,8 @@ class Analyzer:
         ):
             return []
 
-        return (
-            valuebet_engine.analyze(
-                analyses
-            )
+        return valuebet_engine.analyze(
+            analyses
         )
 
     # ==========================================================
@@ -1304,19 +1230,10 @@ class Analyzer:
     ) -> Optional[
         Dict[str, Any]
     ]:
-        """
-        Retorna a análise com maior Índice OddReal.
-        """
-
-        if not analyses:
-            return None
 
         valid = [
-
             item
-
             for item in analyses
-
             if isinstance(
                 item,
                 dict,
@@ -1349,20 +1266,13 @@ class Analyzer:
     ) -> Optional[
         Dict[str, Any]
     ]:
-        """
-        Retorna a melhor oportunidade encontrada.
-        """
 
-        opportunities = (
-            self.value_bets(
-                analyses
-            )
+        opportunities = self.value_bets(
+            analyses
         )
 
-        return (
-            valuebet_engine.best_value_bet(
-                opportunities
-            )
+        return valuebet_engine.best_value_bet(
+            opportunities
         )
 
     # ==========================================================
@@ -1375,9 +1285,6 @@ class Analyzer:
             Dict[str, Any]
         ],
     ) -> Dict[str, Any]:
-        """
-        Gera o resumo geral.
-        """
 
         if not isinstance(
             analyses,
@@ -1385,10 +1292,8 @@ class Analyzer:
         ):
             analyses = []
 
-        value_bets = (
-            self.value_bets(
-                analyses
-            )
+        value_bets = self.value_bets(
+            analyses
         )
 
         risks: Dict[
@@ -1435,15 +1340,6 @@ class Analyzer:
             "risk_distribution":
                 risks,
 
-            "best_opportunity":
-                self.best_opportunity(
-                    analyses
-                ),
-
-            "best_value_bet":
-                self.best_value_bet(
-                    analyses
-                ),
         }
 
     # ==========================================================
@@ -1456,12 +1352,8 @@ class Analyzer:
             Dict[str, Any]
         ],
     ) -> float:
-        """
-        Calcula a média do Índice OddReal.
-        """
 
         values = [
-
             float(
                 item.get(
                     "oddreal_index",
@@ -1469,9 +1361,7 @@ class Analyzer:
                 )
                 or 0
             )
-
             for item in analyses
-
             if isinstance(
                 item,
                 dict,
