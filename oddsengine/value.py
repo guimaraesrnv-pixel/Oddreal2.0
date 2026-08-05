@@ -628,3 +628,10 @@ class ValueBetEngine:
 # ==========================================================
 
 valuebet_engine = ValueBetEngine()
+
+
+# ==========================================================
+# COMPATIBILIDADE COM MÓDULOS LEGADOS
+# ==========================================================
+
+ValueEngine = ValueBetEngine
