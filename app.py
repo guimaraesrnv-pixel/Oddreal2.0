@@ -27,7 +27,7 @@ import streamlit as st
 
 from core.pipeline import pipeline
 from modules.ai_engine import ai_engine
-from modules.logger import info
+from modules.logger import info, error
 
 
 # ============================================================
@@ -69,12 +69,11 @@ st.markdown(
     }
 
     .oddreal-header {
-        background:
-            linear-gradient(
-                135deg,
-                #1E3A8A 0%,
-                #3B82F6 100%
-            );
+        background: linear-gradient(
+            135deg,
+            #1E3A8A 0%,
+            #3B82F6 100%
+        );
 
         padding: 24px 30px;
         border-radius: 18px;
@@ -96,75 +95,6 @@ st.markdown(
         margin: 7px 0 0 0;
         opacity: 0.90;
         font-size: 1rem;
-    }
-
-    .metric-card {
-        background: white;
-        border: 1px solid #E2E8F0;
-        border-radius: 16px;
-        padding: 20px;
-        min-height: 125px;
-
-        box-shadow:
-            0 5px 18px
-            rgba(15, 23, 42, 0.05);
-    }
-
-    .metric-title {
-        color: #64748B;
-        font-size: 0.85rem;
-        font-weight: 600;
-    }
-
-    .metric-value {
-        color: #0F172A;
-        font-size: 1.8rem;
-        font-weight: 800;
-        margin-top: 8px;
-    }
-
-    .section-title {
-        color: #0F172A;
-        font-size: 1.35rem;
-        font-weight: 800;
-        margin-top: 25px;
-        margin-bottom: 12px;
-    }
-
-    .analysis-card {
-        background: white;
-        border: 1px solid #E2E8F0;
-        border-radius: 16px;
-        padding: 20px;
-        margin-bottom: 14px;
-
-        box-shadow:
-            0 4px 16px
-            rgba(15, 23, 42, 0.04);
-    }
-
-    .badge {
-        display: inline-block;
-        padding: 5px 10px;
-        border-radius: 999px;
-        background: #EFF6FF;
-        color: #1D4ED8;
-        font-size: 0.78rem;
-        font-weight: 700;
-    }
-
-    .positive {
-        color: #15803D;
-        font-weight: 800;
-    }
-
-    .negative {
-        color: #B91C1C;
-        font-weight: 800;
-    }
-
-    .muted {
-        color: #64748B;
     }
 
     </style>
@@ -195,89 +125,51 @@ if "selected_analysis" not in st.session_state:
 # ============================================================
 
 def money_or_number(value: Any) -> str:
-    """
-    Formata valores numéricos.
-    """
-
-    if value is None:
-        return "0.00"
+    """Formata valores numéricos."""
 
     try:
         return f"{float(value):.2f}"
-
     except (TypeError, ValueError):
         return "0.00"
 
 
 def percentage(value: Any) -> str:
-    """
-    Formata valores percentuais.
-    """
-
-    if value is None:
-        return "0.00%"
+    """Formata percentuais."""
 
     try:
         return f"{float(value):.2f}%"
-
     except (TypeError, ValueError):
         return "0.00%"
 
 
+def safe_float(value: Any, default: float = 0.0) -> float:
+    """Converte um valor para float com segurança."""
+
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
 def get_result() -> Dict[str, Any]:
-    """
-    Recupera o resultado atual do pipeline.
-    """
+    """Retorna o resultado atual do pipeline."""
 
-    result = st.session_state.get(
-        "pipeline_result"
-    )
+    result = st.session_state.get("pipeline_result")
 
-    if not isinstance(result, dict):
-        return {}
+    if isinstance(result, dict):
+        return result
 
-    return result
-
-
-def run_pipeline(
-    force_refresh: bool = False,
-) -> None:
-    """
-    Executa o pipeline principal.
-    """
-
-    with st.spinner(
-        "Atualizando eventos e analisando o mercado..."
-    ):
-        result = pipeline.execute(
-            force_refresh=force_refresh
-        )
-
-    if not isinstance(result, dict):
-        result = {}
-
-    st.session_state["pipeline_result"] = result
-    st.session_state["ai_result"] = None
-
-    info("Dashboard atualizado.")
+    return {}
 
 
 def get_analyses(
     result: Dict[str, Any],
 ) -> List[Dict[str, Any]]:
-    """
-    Recupera análises válidas.
-    """
+    """Retorna as análises válidas."""
 
-    analyses = result.get(
-        "analyses",
-        [],
-    )
+    analyses = result.get("analyses", [])
 
-    if not isinstance(
-        analyses,
-        list,
-    ):
+    if not isinstance(analyses, list):
         return []
 
     return [
@@ -290,72 +182,133 @@ def get_analyses(
 def get_value_bets(
     result: Dict[str, Any],
 ) -> List[Dict[str, Any]]:
-    """
-    Recupera Value Bets válidas.
-    """
+    """Retorna as Value Bets."""
 
-    value_bets = result.get(
-        "value_bets",
-        [],
-    )
+    value_bets = result.get("value_bets", [])
 
-    if not isinstance(
-        value_bets,
-        list,
-    ):
-        return []
+    if isinstance(value_bets, list):
+
+        valid = [
+            item
+            for item in value_bets
+            if isinstance(item, dict)
+        ]
+
+        if valid:
+            return valid
+
+    analyses = get_analyses(result)
 
     return [
         item
-        for item in value_bets
-        if isinstance(item, dict)
+        for item in analyses
+        if item.get("is_value_bet") is True
     ]
 
 
-def event_name_from_data(
+def event_name(
     item: Dict[str, Any],
 ) -> str:
-    """
-    Monta o nome do evento de forma compatível
-    com diferentes estruturas de dados.
-    """
+    """Monta o nome do evento."""
 
-    event_name = item.get(
-        "event",
-        "",
-    )
+    name = item.get("event")
 
-    if event_name:
-        return str(event_name)
+    if name:
+        return str(name)
 
-    home_team = item.get(
+    home = item.get(
         "home_team",
         "Mandante",
     )
 
-    away_team = item.get(
+    away = item.get(
         "away_team",
         "Visitante",
     )
 
-    return (
-        f"{home_team} × {away_team}"
+    return f"{home} × {away}"
+
+
+def market_name(
+    item: Dict[str, Any],
+) -> str:
+    """Retorna o mercado."""
+
+    return str(
+        item.get(
+            "selected_market",
+            item.get(
+                "market",
+                "Mercado",
+            ),
+        )
     )
 
 
-def safe_float(
-    value: Any,
-    default: float = 0.0,
-) -> float:
-    """
-    Conversão numérica segura.
-    """
+def outcome_name(
+    item: Dict[str, Any],
+) -> str:
+    """Retorna a seleção."""
+
+    return str(
+        item.get(
+            "selected_outcome",
+            item.get(
+                "outcome",
+                "Seleção",
+            ),
+        )
+    )
+
+
+def bookmaker_name(
+    item: Dict[str, Any],
+) -> str:
+    """Retorna a casa de apostas."""
+
+    return str(
+        item.get(
+            "selected_bookmaker",
+            item.get(
+                "bookmaker",
+                "Casa não informada",
+            ),
+        )
+    )
+
+
+def run_pipeline(
+    force_refresh: bool = False,
+) -> None:
+    """Executa o pipeline principal."""
 
     try:
-        return float(value)
 
-    except (TypeError, ValueError):
-        return default
+        with st.spinner(
+            "Atualizando eventos e analisando o mercado..."
+        ):
+
+            result = pipeline.execute(
+                force_refresh=force_refresh
+            )
+
+        if not isinstance(result, dict):
+            result = {}
+
+        st.session_state["pipeline_result"] = result
+        st.session_state["ai_result"] = None
+
+        info("Dashboard atualizado.")
+
+    except Exception as exc:
+
+        error(
+            f"Erro ao executar pipeline: {exc}"
+        )
+
+        st.error(
+            f"Erro ao atualizar o mercado: {exc}"
+        )
 
 
 # ============================================================
@@ -365,16 +318,11 @@ def safe_float(
 st.markdown(
     """
     <div class="oddreal-header">
-
-        <h1>
-            ⚽ OddReal 2.0
-        </h1>
-
+        <h1>⚽ OddReal 2.0</h1>
         <p>
             Central inteligente de análise de odds,
             Value Bets e inteligência de mercado.
         </p>
-
     </div>
     """,
     unsafe_allow_html=True,
@@ -394,6 +342,7 @@ with nav1:
         "📊 Dashboard",
         use_container_width=True,
     ):
+
         st.session_state["page"] = "Dashboard"
         st.session_state["ai_result"] = None
         st.rerun()
@@ -405,6 +354,7 @@ with nav2:
         "🎯 Value Bets",
         use_container_width=True,
     ):
+
         st.session_state["page"] = "Value Bets"
         st.rerun()
 
@@ -415,6 +365,7 @@ with nav3:
         "🤖 Inteligência IA",
         use_container_width=True,
     ):
+
         st.session_state["page"] = "IA"
         st.rerun()
 
@@ -425,9 +376,11 @@ with nav4:
         "🔄 Atualizar Mercado",
         use_container_width=True,
     ):
+
         run_pipeline(
             force_refresh=True
         )
+
         st.rerun()
 
 
@@ -435,7 +388,7 @@ st.divider()
 
 
 # ============================================================
-# RESULTADO ATUAL
+# RESULTADO
 # ============================================================
 
 result = get_result()
@@ -447,12 +400,7 @@ result = get_result()
 
 if st.session_state["page"] == "Dashboard":
 
-    st.markdown(
-        '<div class="section-title">'
-        "Visão geral do mercado"
-        "</div>",
-        unsafe_allow_html=True,
-    )
+    st.title("Visão geral do mercado")
 
     if not result:
 
@@ -465,6 +413,7 @@ if st.session_state["page"] == "Dashboard":
             type="primary",
             use_container_width=True,
         ):
+
             run_pipeline()
             st.rerun()
 
@@ -472,17 +421,22 @@ if st.session_state["page"] == "Dashboard":
 
         total_events = result.get(
             "total_events",
-            0,
+            len(result.get("events", []))
+            if isinstance(
+                result.get("events"),
+                list,
+            )
+            else 0,
         )
 
         total_analyses = result.get(
             "total_analyses",
-            0,
+            len(get_analyses(result)),
         )
 
         total_value_bets = result.get(
             "total_value_bets",
-            0,
+            len(get_value_bets(result)),
         )
 
         summary = result.get(
@@ -490,215 +444,144 @@ if st.session_state["page"] == "Dashboard":
             {},
         )
 
-        if not isinstance(
-            summary,
-            dict,
-        ):
+        if not isinstance(summary, dict):
             summary = {}
 
-        average_index = summary.get(
-            "average_index",
-            0,
+        average_index = safe_float(
+            summary.get(
+                "average_index",
+                0,
+            )
         )
 
         col1, col2, col3, col4 = st.columns(4)
 
         with col1:
-
-            st.markdown(
-                f"""
-                <div class="metric-card">
-                    <div class="metric-title">
-                        Eventos
-                    </div>
-                    <div class="metric-value">
-                        {total_events}
-                    </div>
-                </div>
-                """,
-                unsafe_allow_html=True,
+            st.metric(
+                "Eventos",
+                total_events,
             )
 
         with col2:
-
-            st.markdown(
-                f"""
-                <div class="metric-card">
-                    <div class="metric-title">
-                        Análises
-                    </div>
-                    <div class="metric-value">
-                        {total_analyses}
-                    </div>
-                </div>
-                """,
-                unsafe_allow_html=True,
+            st.metric(
+                "Análises",
+                total_analyses,
             )
 
         with col3:
-
-            st.markdown(
-                f"""
-                <div class="metric-card">
-                    <div class="metric-title">
-                        Value Bets
-                    </div>
-                    <div class="metric-value">
-                        {total_value_bets}
-                    </div>
-                </div>
-                """,
-                unsafe_allow_html=True,
+            st.metric(
+                "Value Bets",
+                total_value_bets,
             )
 
         with col4:
-
-            st.markdown(
-                f"""
-                <div class="metric-card">
-                    <div class="metric-title">
-                        Índice médio
-                    </div>
-                    <div class="metric-value">
-                        {money_or_number(average_index)}
-                    </div>
-                </div>
-                """,
-                unsafe_allow_html=True,
+            st.metric(
+                "Índice médio",
+                f"{average_index:.2f}",
             )
 
+        st.divider()
 
         # ========================================================
         # MELHOR OPORTUNIDADE
         # ========================================================
 
-        st.markdown(
-            '<div class="section-title">'
+        st.subheader(
             "⭐ Melhor oportunidade"
-            "</div>",
-            unsafe_allow_html=True,
         )
 
-        best_opportunity = result.get(
+        best = result.get(
             "best_opportunity"
         )
 
-        if not best_opportunity:
-            best_opportunity = result.get(
+        if not isinstance(best, dict):
+
+            best = result.get(
                 "best_match"
             )
 
-        if isinstance(
-            best_opportunity,
-            dict,
-        ) and best_opportunity:
+        if isinstance(best, dict):
 
-            event_name = event_name_from_data(
-                best_opportunity
-            )
-
-            market_name = best_opportunity.get(
-                "selected_market",
-                best_opportunity.get(
-                    "market",
-                    "Mercado",
-                ),
-            )
-
-            outcome_name = best_opportunity.get(
-                "selected_outcome",
-                best_opportunity.get(
-                    "outcome",
-                    "Seleção",
-                ),
-            )
-
-            odd = best_opportunity.get(
-                "odd",
-                0,
-            )
-
-            ev = best_opportunity.get(
-                "expected_value",
-                0,
-            )
-
-            index = best_opportunity.get(
-                "oddreal_index",
-                0,
-            )
-
-            confidence = best_opportunity.get(
-                "confidence_level",
-                "Não informado",
-            )
-
-            risk = best_opportunity.get(
-                "risk",
-                "Alto",
-            )
-
-            bookmaker = best_opportunity.get(
-                "selected_bookmaker",
-                best_opportunity.get(
-                    "bookmaker",
-                    "Casa não informada",
-                ),
+            st.success(
+                "Melhor oportunidade identificada"
             )
 
             st.markdown(
-                f"""
-                <div class="analysis-card">
-
-                    <span class="badge">
-                        ⭐ MELHOR OPORTUNIDADE
-                    </span>
-
-                    <h3>
-                        {event_name}
-                    </h3>
-
-                    <p class="muted">
-                        {market_name} —
-                        {outcome_name}
-                    </p>
-
-                    <hr>
-
-                    <b>Casa:</b>
-                    {bookmaker}
-
-                    &nbsp;&nbsp;
-
-                    <b>Odd:</b>
-                    {money_or_number(odd)}
-
-                    &nbsp;&nbsp;
-
-                    <b>EV:</b>
-                    <span class="positive">
-                        {percentage(ev)}
-                    </span>
-
-                    &nbsp;&nbsp;
-
-                    <b>Índice OddReal:</b>
-                    {index}
-
-                    &nbsp;&nbsp;
-
-                    <b>Confiança:</b>
-                    {confidence}
-
-                    &nbsp;&nbsp;
-
-                    <b>Risco:</b>
-                    {risk}
-
-                </div>
-                """,
-                unsafe_allow_html=True,
+                f"### {event_name(best)}"
             )
+
+            st.write(
+                f"**Mercado:** {market_name(best)}"
+            )
+
+            st.write(
+                f"**Seleção:** {outcome_name(best)}"
+            )
+
+            col1, col2, col3, col4 = st.columns(4)
+
+            with col1:
+                st.metric(
+                    "Casa",
+                    bookmaker_name(best),
+                )
+
+            with col2:
+                st.metric(
+                    "Odd",
+                    money_or_number(
+                        best.get(
+                            "odd",
+                            0,
+                        )
+                    ),
+                )
+
+            with col3:
+                st.metric(
+                    "EV",
+                    percentage(
+                        best.get(
+                            "expected_value",
+                            0,
+                        )
+                    ),
+                )
+
+            with col4:
+                st.metric(
+                    "Índice OddReal",
+                    safe_float(
+                        best.get(
+                            "oddreal_index",
+                            0,
+                        )
+                    ),
+                )
+
+            col1, col2 = st.columns(2)
+
+            with col1:
+                st.write(
+                    "**Confiança:** "
+                    + str(
+                        best.get(
+                            "confidence_level",
+                            "Baixa",
+                        )
+                    )
+                )
+
+            with col2:
+                st.write(
+                    "**Risco:** "
+                    + str(
+                        best.get(
+                            "risk",
+                            "Alto",
+                        )
+                    )
+                )
 
         else:
 
@@ -706,21 +589,17 @@ if st.session_state["page"] == "Dashboard":
                 "Nenhuma oportunidade disponível."
             )
 
-
         # ========================================================
-        # ANÁLISES RECENTES
+        # ANÁLISES
         # ========================================================
 
-        st.markdown(
-            '<div class="section-title">'
+        st.divider()
+
+        st.subheader(
             "📊 Análises recentes"
-            "</div>",
-            unsafe_allow_html=True,
         )
 
-        analyses = get_analyses(
-            result
-        )
+        analyses = get_analyses(result)
 
         if not analyses:
 
@@ -732,116 +611,79 @@ if st.session_state["page"] == "Dashboard":
 
             for analysis in analyses[:10]:
 
-                event_name = event_name_from_data(
-                    analysis
-                )
+                with st.container(
+                    border=True
+                ):
 
-                market_name = analysis.get(
-                    "selected_market",
-                    analysis.get(
-                        "market",
-                        "Mercado",
-                    ),
-                )
+                    st.markdown(
+                        f"### {event_name(analysis)}"
+                    )
 
-                outcome_name = analysis.get(
-                    "selected_outcome",
-                    "Seleção",
-                )
+                    st.caption(
+                        f"{market_name(analysis)} — "
+                        f"{outcome_name(analysis)}"
+                    )
 
-                odd = analysis.get(
-                    "odd",
-                    0,
-                )
+                    col1, col2, col3, col4 = st.columns(4)
 
-                ev = analysis.get(
-                    "expected_value",
-                    0,
-                )
+                    with col1:
 
-                index = analysis.get(
-                    "oddreal_index",
-                    0,
-                )
+                        st.metric(
+                            "Odd",
+                            money_or_number(
+                                analysis.get(
+                                    "odd",
+                                    0,
+                                )
+                            ),
+                        )
 
-                confidence = analysis.get(
-                    "confidence_level",
-                    "Não informado",
-                )
+                    with col2:
 
-                risk = analysis.get(
-                    "risk",
-                    "Alto",
-                )
+                        ev_value = safe_float(
+                            analysis.get(
+                                "expected_value",
+                                0,
+                            )
+                        )
 
-                is_value = bool(
-                    analysis.get(
+                        st.metric(
+                            "EV",
+                            percentage(ev_value),
+                        )
+
+                    with col3:
+
+                        st.metric(
+                            "Índice",
+                            safe_float(
+                                analysis.get(
+                                    "oddreal_index",
+                                    0,
+                                )
+                            ),
+                        )
+
+                    with col4:
+
+                        st.metric(
+                            "Risco",
+                            str(
+                                analysis.get(
+                                    "risk",
+                                    "Alto",
+                                )
+                            ),
+                        )
+
+                    if analysis.get(
                         "is_value_bet",
                         False,
-                    )
-                )
+                    ):
 
-                ev_class = (
-                    "positive"
-                    if safe_float(ev) >= 0
-                    else "negative"
-                )
-
-                value_label = (
-                    "🎯 VALUE BET"
-                    if is_value
-                    else "Análise"
-                )
-
-                st.markdown(
-                    f"""
-                    <div class="analysis-card">
-
-                        <span class="badge">
-                            {value_label}
-                        </span>
-
-                        <h4>
-                            {event_name}
-                        </h4>
-
-                        <p class="muted">
-                            {market_name} —
-                            {outcome_name}
-                        </p>
-
-                        <p>
-                            <b>Odd:</b>
-                            {money_or_number(odd)}
-
-                            &nbsp;&nbsp;
-
-                            <b>EV:</b>
-
-                            <span class="{ev_class}">
-                                {percentage(ev)}
-                            </span>
-
-                            &nbsp;&nbsp;
-
-                            <b>Índice:</b>
-                            {index}
-                        </p>
-
-                        <p>
-                            <b>Confiança:</b>
-                            {confidence}
-
-                            &nbsp;&nbsp;
-
-                            <b>Risco:</b>
-                            {risk}
-                        </p>
-
-                    </div>
-                    """,
-                    unsafe_allow_html=True,
-                )
+                        st.success(
+                            "🎯 VALUE BET identificada"
+                        )
 
 
 # ============================================================
@@ -850,26 +692,18 @@ if st.session_state["page"] == "Dashboard":
 
 elif st.session_state["page"] == "Value Bets":
 
-    st.markdown(
-        '<div class="section-title">'
-        "🎯 Value Bets"
-        "</div>",
-        unsafe_allow_html=True,
-    )
+    st.title("🎯 Value Bets")
 
     st.write(
-        """
-        Aqui são exibidas as oportunidades identificadas
-        pelo motor quantitativo do OddReal com base em
-        valor esperado, probabilidade, índice OddReal
-        e condições do mercado.
-        """
+        "Oportunidades identificadas pelo "
+        "motor quantitativo do OddReal."
     )
 
     if not result:
 
         st.info(
-            "Carregue o mercado antes de visualizar as Value Bets."
+            "Carregue o mercado antes de visualizar "
+            "as Value Bets."
         )
 
         if st.button(
@@ -877,39 +711,19 @@ elif st.session_state["page"] == "Value Bets":
             type="primary",
             use_container_width=True,
         ):
+
             run_pipeline()
             st.rerun()
 
     else:
 
-        value_bets = get_value_bets(
-            result
-        )
-
-        # Fallback para análises que possuem
-        # is_value_bet=True.
-        if not value_bets:
-
-            analyses = get_analyses(
-                result
-            )
-
-            value_bets = [
-                analysis
-                for analysis in analyses
-                if bool(
-                    analysis.get(
-                        "is_value_bet",
-                        False,
-                    )
-                )
-            ]
+        value_bets = get_value_bets(result)
 
         if not value_bets:
 
             st.warning(
                 "Nenhuma Value Bet foi encontrada "
-                "com os critérios atuais."
+                "no mercado atual."
             )
 
         else:
@@ -921,145 +735,125 @@ elif st.session_state["page"] == "Value Bets":
 
             for opportunity in value_bets:
 
-                event_name = event_name_from_data(
-                    opportunity
-                )
+                with st.container(
+                    border=True
+                ):
 
-                market_name = opportunity.get(
-                    "selected_market",
-                    opportunity.get(
-                        "market",
-                        "Mercado",
-                    ),
-                )
+                    st.markdown(
+                        f"### 🎯 {event_name(opportunity)}"
+                    )
 
-                outcome_name = opportunity.get(
-                    "selected_outcome",
-                    opportunity.get(
-                        "outcome",
-                        "Resultado",
-                    ),
-                )
+                    st.caption(
+                        f"{market_name(opportunity)} — "
+                        f"{outcome_name(opportunity)}"
+                    )
 
-                bookmaker = opportunity.get(
-                    "selected_bookmaker",
-                    opportunity.get(
-                        "bookmaker",
-                        "Casa não informada",
-                    ),
-                )
+                    col1, col2, col3, col4 = st.columns(4)
 
-                odd = opportunity.get(
-                    "odd",
-                    0,
-                )
+                    with col1:
 
-                probability = opportunity.get(
-                    "probability",
-                    opportunity.get(
-                        "confidence",
+                        st.metric(
+                            "Casa",
+                            bookmaker_name(
+                                opportunity
+                            ),
+                        )
+
+                    with col2:
+
+                        st.metric(
+                            "Odd",
+                            money_or_number(
+                                opportunity.get(
+                                    "odd",
+                                    0,
+                                )
+                            ),
+                        )
+
+                    with col3:
+
+                        st.metric(
+                            "Probabilidade",
+                            percentage(
+                                opportunity.get(
+                                    "probability",
+                                    0,
+                                )
+                            ),
+                        )
+
+                    with col4:
+
+                        st.metric(
+                            "EV",
+                            percentage(
+                                opportunity.get(
+                                    "expected_value",
+                                    0,
+                                )
+                            ),
+                        )
+
+                    col1, col2, col3, col4 = st.columns(4)
+
+                    with col1:
+
+                        st.write(
+                            "**Índice OddReal:** "
+                            + str(
+                                opportunity.get(
+                                    "oddreal_index",
+                                    0,
+                                )
+                            )
+                        )
+
+                    with col2:
+
+                        st.write(
+                            "**Risco:** "
+                            + str(
+                                opportunity.get(
+                                    "risk",
+                                    "Alto",
+                                )
+                            )
+                        )
+
+                    with col3:
+
+                        st.write(
+                            "**Confiança:** "
+                            + str(
+                                opportunity.get(
+                                    "confidence_level",
+                                    "Baixa",
+                                )
+                            )
+                        )
+
+                    with col4:
+
+                        st.write(
+                            "**Odd média:** "
+                            + money_or_number(
+                                opportunity.get(
+                                    "average_odd",
+                                    0,
+                                )
+                            )
+                        )
+
+                    variation = opportunity.get(
+                        "market_variation",
                         0,
-                    ),
-                )
+                    )
 
-                ev = opportunity.get(
-                    "expected_value",
-                    0,
-                )
-
-                index = opportunity.get(
-                    "oddreal_index",
-                    0,
-                )
-
-                risk = opportunity.get(
-                    "risk",
-                    "Alto",
-                )
-
-                confidence = opportunity.get(
-                    "confidence_level",
-                    "Baixa",
-                )
-
-                average_odd = opportunity.get(
-                    "average_odd",
-                    0,
-                )
-
-                variation = opportunity.get(
-                    "market_variation",
-                    0,
-                )
-
-                st.markdown(
-                    f"""
-                    <div class="analysis-card">
-
-                        <span class="badge">
-                            🎯 VALUE BET
-                        </span>
-
-                        <h3>
-                            {event_name}
-                        </h3>
-
-                        <p class="muted">
-                            {market_name} —
-                            {outcome_name}
-                        </p>
-
-                        <hr>
-
-                        <b>Casa:</b>
-                        {bookmaker}
-
-                        &nbsp;&nbsp;
-
-                        <b>Odd:</b>
-                        {money_or_number(odd)}
-
-                        &nbsp;&nbsp;
-
-                        <b>Probabilidade:</b>
-                        {percentage(probability)}
-
-                        &nbsp;&nbsp;
-
-                        <b>EV:</b>
-                        <span class="positive">
-                            {percentage(ev)}
-                        </span>
-
-                        <br><br>
-
-                        <b>Índice OddReal:</b>
-                        {index}
-
-                        &nbsp;&nbsp;
-
-                        <b>Risco:</b>
-                        {risk}
-
-                        &nbsp;&nbsp;
-
-                        <b>Confiança:</b>
-                        {confidence}
-
-                        <br><br>
-
-                        <b>Odd média do mercado:</b>
-                        {money_or_number(average_odd)}
-
-                        &nbsp;&nbsp;
-
-                        <b>Variação:</b>
-                        {percentage(variation)}
-
-                    </div>
-                    """,
-                    unsafe_allow_html=True,
-                )
+                    st.write(
+                        "**Variação de mercado:** "
+                        + percentage(variation)
+                    )
 
 
 # ============================================================
@@ -1068,21 +862,19 @@ elif st.session_state["page"] == "Value Bets":
 
 elif st.session_state["page"] == "IA":
 
-    st.markdown(
-        '<div class="section-title">'
+    st.title(
         "🤖 Inteligência Artificial"
-        "</div>",
-        unsafe_allow_html=True,
     )
 
     st.write(
         """
-        A inteligência do OddReal interpreta os indicadores
-        matemáticos produzidos pelo motor quantitativo.
+        A inteligência do OddReal interpreta os
+        indicadores matemáticos produzidos pelo
+        motor quantitativo.
 
         A IA não altera odds, probabilidades ou EV.
-        Ela atua como uma camada interpretativa sobre
-        os dados calculados pelo sistema.
+        Ela atua como uma camada interpretativa
+        sobre os dados calculados pelo sistema.
         """
     )
 
@@ -1097,14 +889,13 @@ elif st.session_state["page"] == "IA":
             type="primary",
             use_container_width=True,
         ):
+
             run_pipeline()
             st.rerun()
 
     else:
 
-        analyses = get_analyses(
-            result
-        )
+        analyses = get_analyses(result)
 
         if not analyses:
 
@@ -1115,28 +906,15 @@ elif st.session_state["page"] == "IA":
 
         else:
 
-            # ====================================================
-            # SELEÇÃO DO EVENTO
-            # ====================================================
-
             options = []
 
-            for i, item in enumerate(
+            for index, item in enumerate(
                 analyses
             ):
 
-                home = item.get(
-                    "home_team",
-                    "Mandante",
-                )
-
-                away = item.get(
-                    "away_team",
-                    "Visitante",
-                )
-
                 options.append(
-                    f"{i + 1}. {home} × {away}"
+                    f"{index + 1}. "
+                    f"{event_name(item)}"
                 )
 
             selected = st.selectbox(
@@ -1156,47 +934,15 @@ elif st.session_state["page"] == "IA":
                 "selected_analysis"
             ] = selected_analysis
 
-            # ====================================================
-            # EVENTO SELECIONADO
-            # ====================================================
-
-            st.markdown(
-                "### 🎯 Evento selecionado"
-            )
-
-            selected_home = selected_analysis.get(
-                "home_team",
-                "Mandante",
-            )
-
-            selected_away = selected_analysis.get(
-                "away_team",
-                "Visitante",
-            )
-
-            selected_market = selected_analysis.get(
-                "selected_market",
-                selected_analysis.get(
-                    "market",
-                    "Mercado",
-                ),
-            )
-
-            selected_outcome = selected_analysis.get(
-                "selected_outcome",
-                "Seleção",
+            st.subheader(
+                "🎯 Evento selecionado"
             )
 
             st.info(
-                f"{selected_home} × "
-                f"{selected_away} — "
-                f"{selected_market} — "
-                f"{selected_outcome}"
+                f"{event_name(selected_analysis)} — "
+                f"{market_name(selected_analysis)} — "
+                f"{outcome_name(selected_analysis)}"
             )
-
-            # ====================================================
-            # BOTÃO DA IA
-            # ====================================================
 
             if st.button(
                 "🤖 Analisar com IA",
@@ -1216,6 +962,10 @@ elif st.session_state["page"] == "IA":
 
                     except Exception as exc:
 
+                        error(
+                            f"Erro na análise IA: {exc}"
+                        )
+
                         ai_result = {
                             "status": "error",
                             "message": (
@@ -1229,10 +979,6 @@ elif st.session_state["page"] == "IA":
                 ] = ai_result
 
                 st.rerun()
-
-            # ====================================================
-            # RESULTADO DA IA
-            # ====================================================
 
             ai_result = st.session_state.get(
                 "ai_result"
@@ -1265,20 +1011,13 @@ elif st.session_state["page"] == "IA":
                     ):
                         indicators = {}
 
-                    # ==========================================
-                    # DIAGNÓSTICO TÉCNICO
-                    # ==========================================
+                    st.divider()
 
-                    st.markdown(
-                        '<div class="section-title">'
+                    st.subheader(
                         "📊 Diagnóstico técnico"
-                        "</div>",
-                        unsafe_allow_html=True,
                     )
 
-                    col1, col2, col3, col4 = st.columns(
-                        4
-                    )
+                    col1, col2, col3, col4 = st.columns(4)
 
                     with col1:
 
@@ -1314,12 +1053,14 @@ elif st.session_state["page"] == "IA":
 
                         st.metric(
                             "Índice OddReal",
-                            indicators.get(
-                                "oddreal_index",
-                                selected_analysis.get(
+                            safe_float(
+                                indicators.get(
                                     "oddreal_index",
-                                    0,
-                                ),
+                                    selected_analysis.get(
+                                        "oddreal_index",
+                                        0,
+                                    ),
+                                )
                             ),
                         )
 
@@ -1327,28 +1068,24 @@ elif st.session_state["page"] == "IA":
 
                         st.metric(
                             "Risco",
-                            indicators.get(
-                                "risk",
-                                selected_analysis.get(
+                            str(
+                                indicators.get(
                                     "risk",
-                                    "Alto",
-                                ),
+                                    selected_analysis.get(
+                                        "risk",
+                                        "Alto",
+                                    ),
+                                )
                             ),
                         )
 
-                    # ==========================================
-                    # INDICADORES COMPLETOS
-                    # ==========================================
-
-                    st.markdown(
-                        "### 📊 Indicadores completos"
+                    st.subheader(
+                        "📊 Indicadores completos"
                     )
 
-                    indicator_col1, indicator_col2 = st.columns(
-                        2
-                    )
+                    col1, col2 = st.columns(2)
 
-                    with indicator_col1:
+                    with col1:
 
                         st.write(
                             "**Probabilidade:** "
@@ -1389,7 +1126,7 @@ elif st.session_state["page"] == "IA":
                             )
                         )
 
-                    with indicator_col2:
+                    with col2:
 
                         st.write(
                             "**Variação de mercado:** "
@@ -1434,12 +1171,8 @@ elif st.session_state["page"] == "IA":
                             )
                         )
 
-                    # ==========================================
-                    # PONTOS FAVORÁVEIS
-                    # ==========================================
-
-                    st.markdown(
-                        "### ✅ Pontos favoráveis"
+                    st.subheader(
+                        "✅ Pontos favoráveis"
                     )
 
                     strengths = ai_result.get(
@@ -1447,15 +1180,13 @@ elif st.session_state["page"] == "IA":
                         [],
                     )
 
-                    if not isinstance(
+                    if isinstance(
                         strengths,
                         list,
-                    ):
-                        strengths = []
-
-                    if strengths:
+                    ) and strengths:
 
                         for strength in strengths:
+
                             st.success(
                                 str(strength)
                             )
@@ -1467,12 +1198,8 @@ elif st.session_state["page"] == "IA":
                             "identificado."
                         )
 
-                    # ==========================================
-                    # PONTOS DE ATENÇÃO
-                    # ==========================================
-
-                    st.markdown(
-                        "### ⚠️ Pontos de atenção"
+                    st.subheader(
+                        "⚠️ Pontos de atenção"
                     )
 
                     warnings = ai_result.get(
@@ -1480,15 +1207,13 @@ elif st.session_state["page"] == "IA":
                         [],
                     )
 
-                    if not isinstance(
+                    if isinstance(
                         warnings,
                         list,
-                    ):
-                        warnings = []
-
-                    if warnings:
+                    ) and warnings:
 
                         for warning in warnings:
+
                             st.warning(
                                 str(warning)
                             )
@@ -1499,12 +1224,8 @@ elif st.session_state["page"] == "IA":
                             "Nenhum alerta adicional."
                         )
 
-                    # ==========================================
-                    # CONCLUSÃO
-                    # ==========================================
-
-                    st.markdown(
-                        "### 🧠 Conclusão da IA"
+                    st.subheader(
+                        "🧠 Conclusão da IA"
                     )
 
                     conclusion = ai_result.get(
@@ -1520,10 +1241,6 @@ elif st.session_state["page"] == "IA":
                     st.info(
                         str(conclusion)
                     )
-
-                    # ==========================================
-                    # AVISO
-                    # ==========================================
 
                     st.caption(
                         "A análise da IA é interpretativa. "
@@ -1543,11 +1260,10 @@ elif st.session_state["page"] == "IA":
 
 
 # ============================================================
-# PÁGINA DESCONHECIDA
+# FALLBACK
 # ============================================================
 
 else:
 
     st.session_state["page"] = "Dashboard"
     st.rerun()
-          
