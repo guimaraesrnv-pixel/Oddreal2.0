@@ -644,31 +644,52 @@ class DataManager:
         )
 
         # ------------------------------------------------------
-        # BOOKMAKERS
-        # ------------------------------------------------------
+        # ==========================================================
+# BOOKMAKERS
+# ==========================================================
 
-        original_bookmakers = (
-            event.get(
-                "bookmakers",
-                [],
-            )
+original_bookmakers = event.get(
+    "bookmakers",
+    [],
+)
+
+if not isinstance(
+    original_bookmakers,
+    list,
+):
+    original_bookmakers = []
+
+info(
+    f"Evento "
+    f"{cleaned['home_team']} x "
+    f"{cleaned['away_team']} "
+    f"recebeu "
+    f"{len(original_bookmakers)} "
+    f"bookmakers da API."
+)
+
+for bookmaker in original_bookmakers:
+
+    if isinstance(
+        bookmaker,
+        dict,
+    ):
+
+        info(
+            "Bookmaker recebido: "
+            f"key={bookmaker.get('key', '')} | "
+            f"title={bookmaker.get('title', '')}"
         )
 
-        if not isinstance(
-            original_bookmakers,
-            list,
-        ):
-            original_bookmakers = []
+# ----------------------------------------------------------
+# TEMPORARIAMENTE: preserva os bookmakers recebidos
+# ----------------------------------------------------------
 
-        cleaned_bookmakers = (
-            self._clean_bookmakers(
-                original_bookmakers
-            )
-        )
-
-        cleaned[
-            "bookmakers"
-        ] = cleaned_bookmakers
+cleaned["bookmakers"] = (
+    deepcopy(
+        original_bookmakers
+    )
+)
 
         # ------------------------------------------------------
         # MARKET ODDS
