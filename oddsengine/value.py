@@ -10,20 +10,41 @@ Responsável por:
 - Valor esperado (EV);
 - Identificação de Value Bets;
 - Classificação das oportunidades;
-- Seleção da melhor Value Bet.
+- Seleção da melhor Value Bet;
+- Compatibilidade com versões anteriores do OddsEngine.
 
 Não consulta API.
 Não utiliza IA.
+Não altera bookmakers.
 """
 
 from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
-from modules.logger import info
+from modules.logger import info, error
 
 
 class ValueBetEngine:
+    """
+    Motor responsável exclusivamente pela análise
+    matemática de Value Bets.
+
+    IMPORTANTE:
+
+    A probabilidade utilizada para calcular EV deve
+    representar a probabilidade estimada pelo OddReal.
+
+    A odd NÃO deve ser utilizada para criar a
+    própria probabilidade estimada, pois isso
+    produziria um cálculo circular.
+
+    probability:
+        Probabilidade estimada em escala 0-100.
+
+    odd:
+        Odd decimal oferecida pela casa.
+    """
 
     def __init__(
         self,
@@ -38,76 +59,6 @@ class ValueBetEngine:
             "ValueBetEngine OddReal 2.0 iniciado."
         )
 
-    @staticmethod
-    def _safe_float(
-        value: Any,
-        default: float = 0.0,
-    ) -> float:
-
-        try:
-            result = float(value)
-
-            if result != result:
-                return default
-
-            return result
-
-        except (
-            TypeError,
-            ValueError,
-        ):
-            return default
-
-    def implied_probability(
-        self,
-        odd: float,
-    ) -> float:
-
-        odd = self._safe_float(odd)
-
-        if odd <= 0:
-            return 0.0
-
-        return 100.0 / odd
-
-    def expected_value(
-        self,
-        probability: float,
-        odd: float,
-    ) -> float:
-        """
-        EV percentual.
-
-        probability está em 0-100.
-
-        Fórmula:
-
-        EV = ((probabilidade / 100) × odd - 1) × 100
-        """
-
-        probability = self._safe_float(
-            probability
-        )
-
-        odd = self._safe_float(
-            odd
-        )
-
-        if probability <= 0 or odd <= 0:
-            return 0.0
-
-        probability_decimal = (
-            probability / 100.0
-        )
-
-        return round(
-            (
-                probability_decimal * odd
-                - 1.0
-            ) * 100.0,
-            4,
-        )
-
     # ==========================================================
     # CONVERSÃO SEGURA
     # ==========================================================
@@ -117,6 +68,12 @@ class ValueBetEngine:
         value: Any,
         default: float = 0.0,
     ) -> float:
+        """
+        Converte um valor para float com segurança.
+
+        Evita que valores inválidos interrompam
+        o processamento do pipeline.
+        """
 
         try:
 
@@ -125,7 +82,15 @@ class ValueBetEngine:
 
             result = float(value)
 
+            # NaN
             if result != result:
+                return default
+
+            # infinito
+            if result in (
+                float("inf"),
+                float("-inf"),
+            ):
                 return default
 
             return result
@@ -145,15 +110,35 @@ class ValueBetEngine:
         self,
         odd: float,
     ) -> float:
+        """
+        Calcula a probabilidade implícita da odd.
+
+        Fórmula:
+
+            P = 1 / odd
+
+        Retorno em escala 0-100.
+
+        Exemplos:
+
+            Odd 2.00 -> 50.00%
+            Odd 1.50 -> 66.67%
+            Odd 4.00 -> 25.00%
+            Odd 8.00 -> 12.50%
+        """
 
         odd = self._safe_float(
             odd
         )
 
         if odd <= 0:
+
             return 0.0
 
-        return 100.0 / odd
+        return round(
+            (1.0 / odd) * 100.0,
+            4,
+        )
 
     # ==========================================================
     # EXPECTED VALUE
@@ -165,25 +150,44 @@ class ValueBetEngine:
         odd: float,
     ) -> float:
         """
-        Calcula EV percentual.
+        Calcula o Valor Esperado (EV) percentual.
 
         probability:
-            probabilidade justa em 0-100.
+            Probabilidade estimada pelo OddReal,
+            em escala 0-100.
 
         odd:
-            odd decimal.
+            Odd decimal.
 
         Fórmula:
 
-            EV = ((probabilidade / 100) * odd - 1) * 100
+            EV =
+            ((probabilidade / 100) × odd - 1) × 100
 
         Exemplo:
 
-            probability = 15
-            odd = 8
+            probability = 15%
+            odd = 8.00
 
-            EV = ((0.15 * 8) - 1) * 100
+            0.15 × 8 = 1.20
+
+            1.20 - 1 = 0.20
+
             EV = 20%
+
+        IMPORTANTE:
+
+        A probabilidade deve ser independente da
+        odd analisada.
+
+        Não devemos fazer:
+
+            probability = 100 / odd
+
+        para depois calcular EV.
+
+        Isso faria o EV ser sempre aproximadamente
+        zero e destruiria a identificação de valor.
         """
 
         probability = self._safe_float(
@@ -194,18 +198,29 @@ class ValueBetEngine:
             odd
         )
 
-        if probability <= 0 or odd <= 0:
+        if (
+            probability <= 0
+            or odd <= 0
+        ):
+
             return 0.0
+
+        # Proteção contra probabilidades impossíveis.
+        if probability > 100:
+
+            probability = 100.0
 
         probability_decimal = (
             probability / 100.0
         )
 
+        ev = (
+            probability_decimal * odd
+            - 1.0
+        ) * 100.0
+
         return round(
-            (
-                probability_decimal * odd
-                - 1.0
-            ) * 100.0,
+            ev,
             4,
         )
 
@@ -218,13 +233,27 @@ class ValueBetEngine:
         probability: float,
         odd: float,
     ) -> bool:
+        """
+        Determina se uma oportunidade é Value Bet.
+
+        Regra:
+
+            EV >= minimum_ev
+
+        Com minimum_ev padrão de 5%:
+
+            EV < 5%  -> não é Value Bet
+            EV >= 5% -> é Value Bet
+        """
 
         ev = self.expected_value(
             probability,
             odd,
         )
 
-        return ev >= self.minimum_ev
+        return (
+            ev >= self.minimum_ev
+        )
 
     # ==========================================================
     # CLASSIFICAÇÃO
@@ -234,21 +263,32 @@ class ValueBetEngine:
     def classify(
         expected_value: float,
     ) -> str:
+        """
+        Classifica a força matemática da oportunidade.
+        """
 
-        ev = float(
+        ev = ValueBetEngine._safe_float(
             expected_value
         )
 
-        if ev >= 15:
+        if ev >= 20:
+
             return "Excelente"
 
-        if ev >= 10:
+        if ev >= 15:
+
             return "Muito Forte"
 
+        if ev >= 10:
+
+            return "Forte"
+
         if ev >= 5:
+
             return "Value Bet"
 
         if ev > 0:
+
             return "Positivo"
 
         return "Sem Valor"
@@ -265,11 +305,37 @@ class ValueBetEngine:
     ) -> List[
         Dict[str, Any]
     ]:
+        """
+        Analisa as oportunidades recebidas
+        pelo Analyzer.
+
+        A função:
+
+        1. identifica a odd;
+        2. obtém a probabilidade estimada;
+        3. calcula o EV;
+        4. verifica se é Value Bet;
+        5. cria uma estrutura padronizada.
+
+        A probabilidade principal é:
+
+            probability
+
+        Fallback de compatibilidade:
+
+            confidence
+
+        IMPORTANTE:
+
+        Não utilizamos a probabilidade implícita da
+        própria odd como probabilidade estimada.
+        """
 
         if not isinstance(
             analyses,
             list,
         ):
+
             return []
 
         opportunities: List[
@@ -282,11 +348,12 @@ class ValueBetEngine:
                 event,
                 dict,
             ):
+
                 continue
 
-            # --------------------------------------------------
+            # ==================================================
             # ODD
-            # --------------------------------------------------
+            # ==================================================
 
             best_odd = event.get(
                 "best_odd",
@@ -297,6 +364,7 @@ class ValueBetEngine:
                 best_odd,
                 dict,
             ):
+
                 best_odd = {}
 
             odd = self._safe_float(
@@ -310,41 +378,80 @@ class ValueBetEngine:
             )
 
             if odd <= 0:
+
                 continue
 
-            # --------------------------------------------------
-            # PROBABILIDADE JUSTA
-            # --------------------------------------------------
+            # ==================================================
+            # PROBABILIDADE ESTIMADA
+            # ==================================================
+
+            probability_value = event.get(
+                "probability",
+                None,
+            )
+
+            # Compatibilidade com versões anteriores
+            if probability_value is None:
+
+                probability_value = event.get(
+                    "confidence",
+                    0,
+                )
 
             probability = self._safe_float(
-                event.get(
-                    "probability",
-                    event.get(
-                        "confidence",
-                        0,
-                    ),
-                )
+                probability_value
             )
 
             if probability <= 0:
+
                 continue
 
-            # --------------------------------------------------
+            # Proteção contra valores impossíveis.
+
+            if probability > 100:
+
+                probability = 100.0
+
+            # ==================================================
+            # PROBABILIDADE IMPLÍCITA
+            # ==================================================
+
+            implied_probability = (
+                self.implied_probability(
+                    odd
+                )
+            )
+
+            # ==================================================
             # EV
-            # --------------------------------------------------
+            # ==================================================
 
             ev = self.expected_value(
                 probability,
                 odd,
             )
 
-            # --------------------------------------------------
+            # ==================================================
             # VALUE BET
-            # --------------------------------------------------
+            # ==================================================
 
             is_value = (
                 ev >= self.minimum_ev
             )
+
+            # ==================================================
+            # CLASSIFICAÇÃO
+            # ==================================================
+
+            classification = (
+                self.classify(
+                    ev
+                )
+            )
+
+            # ==================================================
+            # ESTRUTURA DA OPORTUNIDADE
+            # ==================================================
 
             opportunity = {
 
@@ -405,11 +512,19 @@ class ValueBetEngine:
                         ),
                     ),
 
+                # ------------------------------------------
+                # ODDS
+                # ------------------------------------------
+
                 "odd":
                     round(
                         odd,
                         3,
                     ),
+
+                # ------------------------------------------
+                # PROBABILIDADES
+                # ------------------------------------------
 
                 "probability":
                     round(
@@ -417,16 +532,32 @@ class ValueBetEngine:
                         3,
                     ),
 
+                "implied_probability":
+                    round(
+                        implied_probability,
+                        3,
+                    ),
+
+                # ------------------------------------------
+                # EV
+                # ------------------------------------------
+
                 "expected_value":
                     round(
                         ev,
                         3,
                     ),
 
+                # ------------------------------------------
+                # ODDREAL
+                # ------------------------------------------
+
                 "oddreal_index":
-                    event.get(
-                        "oddreal_index",
-                        0,
+                    self._safe_float(
+                        event.get(
+                            "oddreal_index",
+                            0,
+                        )
                     ),
 
                 "confidence_level":
@@ -435,17 +566,29 @@ class ValueBetEngine:
                         "",
                     ),
 
+                # ------------------------------------------
+                # MERCADO
+                # ------------------------------------------
+
                 "average_odd":
-                    event.get(
-                        "average_odd",
-                        0,
+                    self._safe_float(
+                        event.get(
+                            "average_odd",
+                            0,
+                        )
                     ),
 
                 "market_variation":
-                    event.get(
-                        "market_variation",
-                        0,
+                    self._safe_float(
+                        event.get(
+                            "market_variation",
+                            0,
+                        )
                     ),
+
+                # ------------------------------------------
+                # RISCO
+                # ------------------------------------------
 
                 "risk":
                     event.get(
@@ -453,26 +596,37 @@ class ValueBetEngine:
                         "Alto",
                     ),
 
+                # ------------------------------------------
+                # CLASSIFICAÇÃO
+                # ------------------------------------------
+
                 "classification":
-                    self.classify(
-                        ev
-                    ),
+                    classification,
+
+                # ------------------------------------------
+                # FLAG DEFINITIVA
+                # ------------------------------------------
 
                 "is_value_bet":
                     is_value,
 
             }
 
+            # ==================================================
+            # APENAS VALUE BETS
+            # ==================================================
+
+            if not is_value:
+
+                continue
+
             opportunities.append(
                 opportunity
             )
 
         info(
-            f"{sum("
-                1
-                for item in opportunities
-                if item.get("is_value_bet")
-            )} Value Bets encontradas."
+            f"{len(opportunities)} "
+            "Value Bets encontradas."
         )
 
         return opportunities
@@ -489,11 +643,21 @@ class ValueBetEngine:
     ) -> Optional[
         Dict[str, Any]
     ]:
+        """
+        Retorna a melhor Value Bet.
+
+        Critério principal:
+            maior EV.
+
+        Critério de desempate:
+            maior Índice OddReal.
+        """
 
         if not isinstance(
             opportunities,
             list,
         ):
+
             return None
 
         valid = [
@@ -502,32 +666,24 @@ class ValueBetEngine:
 
             for item in opportunities
 
-            if isinstance(
-                item,
-                dict,
+            if (
+                isinstance(
+                    item,
+                    dict,
+                )
+                and item.get(
+                    "is_value_bet",
+                    False,
+                )
             )
         ]
 
         if not valid:
-            return None
 
-        value_bets = [
-
-            item
-
-            for item in valid
-
-            if item.get(
-                "is_value_bet",
-                False,
-            )
-        ]
-
-        if not value_bets:
             return None
 
         return max(
-            value_bets,
+            valid,
             key=lambda item: (
                 self._safe_float(
                     item.get(
@@ -535,6 +691,7 @@ class ValueBetEngine:
                         0,
                     )
                 ),
+
                 self._safe_float(
                     item.get(
                         "oddreal_index",
@@ -551,6 +708,9 @@ class ValueBetEngine:
     def status(
         self,
     ) -> Dict[str, Any]:
+        """
+        Retorna o estado atual do motor.
+        """
 
         return {
 
@@ -567,12 +727,22 @@ class ValueBetEngine:
 
 
 # ==========================================================
+# COMPATIBILIDADE COM VERSÕES ANTERIORES
+# ==========================================================
+
+# Alguns módulos antigos do OddReal podem importar
+# ValueEngine em vez de ValueBetEngine.
+
+ValueEngine = ValueBetEngine
+
+
+# ==========================================================
 # INSTÂNCIAS GLOBAIS
 # ==========================================================
 
 valuebet_engine = ValueBetEngine()
 
-# Compatibilidade com versões anteriores
-ValueEngine = ValueBetEngine
+# Compatibilidade com módulos que ainda utilizam
+# o nome antigo "value_engine".
 
 value_engine = valuebet_engine
