@@ -1,41 +1,35 @@
 """
 OddReal 2.0
-Módulo de comunicação com The Odds API.
+Comunicação com The Odds API
 
 Responsabilidades:
 
-- Comunicação com a The Odds API.
-- Consulta de esportes e eventos.
-- Consulta de odds.
-- Registro das bookmakers reais retornadas pela API.
-- Normalização das bookmakers através de bookmakers.py.
-- Identificação das bookmakers autorizadas.
-- Preparação dos dados para o DataManager.
+- Comunicação com The Odds API
+- Consulta de esportes
+- Consulta de eventos
+- Consulta de odds
+- Tratamento de erros
+- Cache
+- Diagnóstico dos bookmakers recebidos
+- Registro das bookmaker keys reais nos logs
 
-IMPORTANTE
-----------
-Este módulo NÃO decide quais casas devem ser analisadas
-por conta própria.
+IMPORTANTE:
 
-A whitelist oficial fica em:
+Este módulo NÃO decide sozinho quais bookmakers serão usados
+na análise.
 
-    config.bookmakers.py
+Ele apenas:
+    1. consulta a API;
+    2. registra exatamente o que a API devolveu;
+    3. entrega os dados ao restante do sistema.
 
-ou, dependendo da estrutura do projeto:
-
-    config/bookmakers.py
-
-O módulo apenas consulta essa configuração e marca cada
-bookmaker com:
-
-    _normalized_key
-    _allowed
-    _display_name
+O filtro de bookmakers autorizados deve ser realizado pela
+camada de normalização/DataManager/Analyzer.
 """
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Dict, List, Optional, Any
 
 import requests
 
@@ -43,37 +37,30 @@ from config.settings import Settings
 from modules.cache_manager import cache
 from modules.logger import info, warning, error
 
+
 # ==========================================================
-# WHITELIST DE BOOKMAKERS
+# CONFIGURAÇÃO
 # ==========================================================
 
-try:
-    from config.bookmakers import (
-        normalize_bookmaker_name,
-        is_allowed_bookmaker,
-        bookmaker_display_name,
-    )
-except ImportError:
-    try:
-        from bookmakers import (
-            normalize_bookmaker_name,
-            is_allowed_bookmaker,
-            bookmaker_display_name,
-        )
-    except ImportError as exc:
-        raise ImportError(
-            "Não foi possível importar bookmakers.py. "
-            "Verifique se o arquivo está em config/bookmakers.py."
-        ) from exc
+BASE_URL = "https://api.the-odds-api.com/v4"
+
+# Alterar esta versão força uma nova chave de cache.
+#
+# Isso é importante durante o diagnóstico para evitar que
+# dados antigos continuem sendo utilizados.
+CACHE_VERSION = "diagnostic-v3"
 
 
 # ==========================================================
-# CLIENTE THE ODDS API
+# CLIENTE
 # ==========================================================
 
 class OddsAPI:
+    """
+    Cliente responsável pela comunicação com a The Odds API.
+    """
 
-    BASE_URL = "https://api.the-odds-api.com/v4"
+    BASE_URL = BASE_URL
 
     def __init__(self) -> None:
 
@@ -83,6 +70,23 @@ class OddsAPI:
         info(
             "OddsAPIClient OddReal 2.0 inicializado."
         )
+
+        # --------------------------------------------------
+        # Nunca registrar a API KEY no log.
+        # --------------------------------------------------
+
+        if not self.api_key:
+
+            warning(
+                "The Odds API: API_KEY não configurada."
+            )
+
+        else:
+
+            info(
+                "The Odds API: API_KEY carregada "
+                "corretamente da configuração."
+            )
 
     # ======================================================
     # REQUEST
@@ -96,38 +100,64 @@ class OddsAPI:
         """
         Executa uma requisição para a The Odds API.
 
-        Retorna:
-            Dados JSON retornados pela API.
-
-        Em caso de erro:
-            {}.
+        A API KEY nunca é registrada nos logs.
         """
 
         if params is None:
+
             params = {}
 
-        params = dict(params)
+        # Criamos uma cópia para não alterar o dicionário
+        # recebido pelo chamador.
 
-        params["apiKey"] = self.api_key
+        request_params = dict(params)
+
+        request_params["apiKey"] = self.api_key
 
         url = f"{self.BASE_URL}/{endpoint}"
+
+        # --------------------------------------------------
+        # LOG DA REQUISIÇÃO
+        # --------------------------------------------------
+
+        safe_params = dict(request_params)
+
+        # Nunca mostrar a API KEY.
+
+        safe_params["apiKey"] = "***"
+
+        info(
+            "The Odds API requisitando: "
+            f"{endpoint} | "
+            f"params={safe_params}"
+        )
 
         try:
 
             response = requests.get(
                 url,
-                params=params,
+                params=request_params,
                 timeout=self.timeout,
+            )
+
+            # --------------------------------------------------
+            # STATUS HTTP
+            # --------------------------------------------------
+
+            info(
+                "The Odds API respondeu com HTTP "
+                f"{response.status_code}."
             )
 
             response.raise_for_status()
 
-            info(
-                "The Odds API respondeu com HTTP %s.",
-                response.status_code,
-            )
+            data = response.json()
 
-            return response.json()
+            return data
+
+        # ------------------------------------------------------
+        # TIMEOUT
+        # ------------------------------------------------------
 
         except requests.exceptions.Timeout:
 
@@ -137,317 +167,351 @@ class OddsAPI:
 
             return {}
 
+        # ------------------------------------------------------
+        # ERRO HTTP
+        # ------------------------------------------------------
+
         except requests.exceptions.HTTPError as exc:
 
-            status_code = getattr(
-                response,
-                "status_code",
-                "desconhecido",
+            error(
+                f"Erro HTTP na The Odds API: {exc}"
             )
 
-            error(
-                "Erro HTTP %s na The Odds API: %s",
-                status_code,
-                exc,
-            )
+            # Tenta mostrar o corpo da resposta porque pode
+            # conter uma explicação útil da própria API.
+
+            try:
+
+                body = response.text[:1000]
+
+                error(
+                    "Resposta da The Odds API: "
+                    f"{body}"
+                )
+
+            except Exception:
+
+                pass
 
             return {}
 
-        except requests.exceptions.RequestException as exc:
-
-            error(
-                "Erro de comunicação com The Odds API: %s",
-                exc,
-            )
-
-            return {}
+        # ------------------------------------------------------
+        # ERRO DE JSON
+        # ------------------------------------------------------
 
         except ValueError as exc:
 
             error(
-                "The Odds API retornou JSON inválido: %s",
-                exc,
+                "A The Odds API retornou uma resposta "
+                f"que não pôde ser convertida em JSON: {exc}"
             )
 
             return {}
+
+        # ------------------------------------------------------
+        # ERRO GERAL
+        # ------------------------------------------------------
 
         except Exception as exc:
 
             error(
-                "Erro inesperado ao acessar The Odds API: %s",
-                exc,
+                "Erro inesperado ao acessar "
+                f"The Odds API: {exc}"
             )
 
             return {}
 
     # ======================================================
-    # BOOKMAKER
+    # DIAGNÓSTICO DE BOOKMAKERS
     # ======================================================
 
     @staticmethod
-    def _prepare_bookmaker(
-        bookmaker: Any,
-    ) -> Optional[Dict[str, Any]]:
+    def _log_bookmakers(
+        events: List[Dict[str, Any]],
+    ) -> None:
         """
-        Prepara uma bookmaker individual.
+        Registra nos logs as bookmaker keys REAIS retornadas
+        pela The Odds API.
 
-        A API normalmente retorna algo semelhante a:
+        Este método é exclusivamente diagnóstico.
 
-        {
-            "key": "bet365",
-            "title": "bet365",
-            "last_update": "...",
-            "markets": [...]
-        }
+        Exemplo de log:
 
-        O método adiciona:
+            Evento X:
+            bookmaker key='bet365'
+            title='Bet365'
 
-            _normalized_key
-            _allowed
-            _display_name
-
-        Sem alterar os campos originais da API.
+        Dessa maneira conseguimos descobrir exatamente
+        quais identificadores a API está enviando.
         """
 
-        if not isinstance(bookmaker, dict):
+        if not events:
 
             warning(
-                "Bookmaker ignorado porque não é um objeto JSON válido: %r",
-                bookmaker,
+                "Diagnóstico de bookmakers: "
+                "nenhum evento recebido."
             )
 
-            return None
+            return
 
-        prepared = dict(bookmaker)
+        info(
+            "=================================================="
+        )
 
-        # --------------------------------------------------
-        # KEY REAL DA API
-        # --------------------------------------------------
+        info(
+            "DIAGNÓSTICO DE BOOKMAKERS — KEYS REAIS DA API"
+        )
 
-        raw_key = prepared.get("key")
+        info(
+            "=================================================="
+        )
 
-        raw_title = prepared.get("title")
-
-        if raw_key is None:
-            raw_key = ""
-
-        if raw_title is None:
-            raw_title = ""
-
-        raw_key = str(raw_key).strip()
-
-        raw_title = str(raw_title).strip()
+        all_keys = set()
 
         # --------------------------------------------------
-        # LOG DA KEY REAL
+        # PERCORRE EVENTOS
+        # --------------------------------------------------
+
+        for event in events:
+
+            event_id = event.get(
+                "id",
+                "sem-id",
+            )
+
+            home_team = event.get(
+                "home_team",
+                "?",
+            )
+
+            away_team = event.get(
+                "away_team",
+                "?",
+            )
+
+            bookmakers = event.get(
+                "bookmakers",
+                [],
+            )
+
+            info(
+                f"Evento: {home_team} x {away_team} "
+                f"| ID={event_id}"
+            )
+
+            # --------------------------------------------------
+            # EVENTO SEM BOOKMAKERS
+            # --------------------------------------------------
+
+            if not bookmakers:
+
+                warning(
+                    f"Evento {home_team} x {away_team}: "
+                    "nenhum bookmaker retornado."
+                )
+
+                continue
+
+            event_keys = []
+
+            # --------------------------------------------------
+            # BOOKMAKERS
+            # --------------------------------------------------
+
+            for bookmaker in bookmakers:
+
+                if not isinstance(
+                    bookmaker,
+                    dict,
+                ):
+
+                    warning(
+                        "Bookmaker recebido em formato "
+                        f"inesperado: {bookmaker!r}"
+                    )
+
+                    continue
+
+                key = bookmaker.get(
+                    "key"
+                )
+
+                title = bookmaker.get(
+                    "title"
+                )
+
+                last_update = bookmaker.get(
+                    "last_update"
+                )
+
+                if key:
+
+                    all_keys.add(
+                        str(key)
+                    )
+
+                    event_keys.append(
+                        str(key)
+                    )
+
+                info(
+                    "  BOOKMAKER | "
+                    f"key='{key}' | "
+                    f"title='{title}' | "
+                    f"last_update='{last_update}'"
+                )
+
+            info(
+                "  KEYS DO EVENTO: "
+                f"{sorted(set(event_keys))}"
+            )
+
+        # --------------------------------------------------
+        # RESUMO GLOBAL
         # --------------------------------------------------
 
         info(
-            "Bookmaker recebido da API: key='%s' | title='%s'",
-            raw_key,
-            raw_title,
+            "--------------------------------------------------"
         )
 
-        # --------------------------------------------------
-        # NORMALIZAÇÃO
-        # --------------------------------------------------
-
-        normalized_key = normalize_bookmaker_name(
-            raw_key
+        info(
+            "BOOKMAKER KEYS ÚNICAS RECEBIDAS PELA API:"
         )
 
-        # --------------------------------------------------
-        # FALLBACK PELO TITLE
-        # --------------------------------------------------
-        #
-        # Algumas fontes podem possuir uma key que não
-        # esteja cadastrada, mas um title reconhecível.
-        #
-        # Primeiro tentamos a key.
-        # Se não funcionar, tentamos o title.
-        #
+        if all_keys:
 
-        if normalized_key is None and raw_title:
-
-            normalized_key = normalize_bookmaker_name(
-                raw_title
-            )
-
-            if normalized_key is not None:
+            for key in sorted(all_keys):
 
                 info(
-                    "Bookmaker reconhecido pelo title: "
-                    "key='%s' | title='%s' | normalized='%s'",
-                    raw_key,
-                    raw_title,
-                    normalized_key,
+                    f"  -> '{key}'"
                 )
-
-        # --------------------------------------------------
-        # AUTORIZAÇÃO
-        # --------------------------------------------------
-
-        allowed = False
-
-        if normalized_key is not None:
-
-            allowed = is_allowed_bookmaker(
-                normalized_key
-            )
-
-        # --------------------------------------------------
-        # NOME DE EXIBIÇÃO
-        # --------------------------------------------------
-
-        if normalized_key is not None:
-
-            display_name = bookmaker_display_name(
-                normalized_key
-            )
 
         else:
 
-            display_name = (
-                raw_title
-                or raw_key
-                or "Casa não identificada"
-            )
-
-        # --------------------------------------------------
-        # METADADOS INTERNOS
-        # --------------------------------------------------
-
-        prepared["_normalized_key"] = normalized_key
-
-        prepared["_allowed"] = allowed
-
-        prepared["_display_name"] = display_name
-
-        prepared["_raw_key"] = raw_key
-
-        # --------------------------------------------------
-        # LOG FINAL
-        # --------------------------------------------------
-
-        if allowed:
-
-            info(
-                "BOOKMAKER AUTORIZADA: "
-                "key='%s' | normalized='%s' | display='%s'",
-                raw_key,
-                normalized_key,
-                display_name,
-            )
-
-        else:
-
-            info(
-                "BOOKMAKER NÃO AUTORIZADA: "
-                "key='%s' | title='%s' | normalized='%s'",
-                raw_key,
-                raw_title,
-                normalized_key,
-            )
-
-        return prepared
-
-    # ======================================================
-    # EVENTO
-    # ======================================================
-
-    def _prepare_event(
-        self,
-        event: Any,
-    ) -> Optional[Dict[str, Any]]:
-        """
-        Prepara um evento retornado pela API.
-
-        As bookmakers são analisadas e recebem os metadados
-        internos utilizados posteriormente pelo DataManager.
-        """
-
-        if not isinstance(event, dict):
-
             warning(
-                "Evento ignorado porque não é um objeto válido."
+                "Nenhuma bookmaker key foi encontrada."
             )
 
-            return None
-
-        prepared_event = dict(event)
-
-        bookmakers = prepared_event.get(
-            "bookmakers",
-            [],
+        info(
+            "TOTAL DE BOOKMAKER KEYS ÚNICAS: "
+            f"{len(all_keys)}"
         )
 
-        if not isinstance(bookmakers, list):
-
-            warning(
-                "Evento %s possui bookmakers em formato inválido.",
-                prepared_event.get("id"),
-            )
-
-            bookmakers = []
-
-        prepared_bookmakers: List[Dict[str, Any]] = []
-
-        for bookmaker in bookmakers:
-
-            prepared = self._prepare_bookmaker(
-                bookmaker
-            )
-
-            if prepared is not None:
-
-                prepared_bookmakers.append(
-                    prepared
-                )
-
-        prepared_event["bookmakers"] = (
-            prepared_bookmakers
+        info(
+            "=================================================="
         )
 
-        return prepared_event
-
     # ======================================================
-    # EVENTOS
+    # DIAGNÓSTICO DE MERCADOS
     # ======================================================
 
-    def _prepare_events(
-        self,
-        data: Any,
-    ) -> List[Dict[str, Any]]:
+    @staticmethod
+    def _log_markets(
+        events: List[Dict[str, Any]],
+    ) -> None:
         """
-        Prepara todos os eventos retornados pela API.
+        Registra os mercados realmente retornados pela API.
+
+        Isso permite descobrir se o problema está:
+
+            bookmakers
+                ou
+            markets
+                ou
+            outcomes.
         """
 
-        if not isinstance(data, list):
+        info(
+            "=================================================="
+        )
 
-            warning(
-                "Resposta de eventos não é uma lista."
+        info(
+            "DIAGNÓSTICO DE MERCADOS DA THE ODDS API"
+        )
+
+        info(
+            "=================================================="
+        )
+
+        for event in events:
+
+            home_team = event.get(
+                "home_team",
+                "?",
             )
 
-            return []
-
-        prepared_events: List[Dict[str, Any]] = []
-
-        for event in data:
-
-            prepared = self._prepare_event(
-                event
+            away_team = event.get(
+                "away_team",
+                "?",
             )
 
-            if prepared is not None:
+            bookmakers = event.get(
+                "bookmakers",
+                [],
+            )
 
-                prepared_events.append(
-                    prepared
+            for bookmaker in bookmakers:
+
+                if not isinstance(
+                    bookmaker,
+                    dict,
+                ):
+
+                    continue
+
+                bookmaker_key = bookmaker.get(
+                    "key",
+                    "sem-key",
                 )
 
-        return prepared_events
+                markets = bookmaker.get(
+                    "markets",
+                    [],
+                )
+
+                if not markets:
+
+                    info(
+                        f"Evento {home_team} x {away_team} | "
+                        f"bookmaker='{bookmaker_key}' | "
+                        "nenhum mercado."
+                    )
+
+                    continue
+
+                market_keys = []
+
+                for market in markets:
+
+                    if not isinstance(
+                        market,
+                        dict,
+                    ):
+
+                        continue
+
+                    market_key = market.get(
+                        "key"
+                    )
+
+                    if market_key:
+
+                        market_keys.append(
+                            str(market_key)
+                        )
+
+                info(
+                    f"Evento {home_team} x {away_team} | "
+                    f"bookmaker='{bookmaker_key}' | "
+                    f"markets={sorted(set(market_keys))}"
+                )
+
+        info(
+            "=================================================="
+        )
 
     # ======================================================
-    # ESPORTES
+    # SPORTS
     # ======================================================
 
     def get_sports(
@@ -457,7 +521,9 @@ class OddsAPI:
         Retorna a lista de esportes disponíveis.
         """
 
-        cache_key = "sports"
+        cache_key = (
+            f"{CACHE_VERSION}:sports"
+        )
 
         cached = cache.get(
             cache_key
@@ -472,7 +538,8 @@ class OddsAPI:
             return cached
 
         info(
-            "Consultando lista de esportes."
+            "Consultando lista de esportes "
+            "na The Odds API."
         )
 
         sports = self._request(
@@ -485,7 +552,7 @@ class OddsAPI:
         ):
 
             warning(
-                "A The Odds API não retornou uma lista de esportes."
+                "Resposta inesperada ao consultar esportes."
             )
 
             return []
@@ -497,14 +564,14 @@ class OddsAPI:
         )
 
         info(
-            "%s esportes recebidos da The Odds API.",
-            len(sports),
+            "The Odds API retornou "
+            f"{len(sports)} esportes."
         )
 
         return sports
 
     # ======================================================
-    # EVENTOS + ODDS
+    # EVENTOS
     # ======================================================
 
     def get_events(
@@ -512,10 +579,12 @@ class OddsAPI:
         sport: str,
     ) -> List[Dict[str, Any]]:
         """
-        Busca eventos e odds da The Odds API.
+        Consulta eventos e odds de um esporte.
 
-        Os bookmakers são preparados antes de serem
-        entregues ao DataManager.
+        IMPORTANTE:
+
+        O diagnóstico registra as bookmaker keys reais
+        devolvidas pela API antes de qualquer filtragem.
         """
 
         if not sport:
@@ -527,7 +596,7 @@ class OddsAPI:
             return []
 
         cache_key = (
-            f"events_{sport}"
+            f"{CACHE_VERSION}:events:{sport}"
         )
 
         cached = cache.get(
@@ -537,26 +606,49 @@ class OddsAPI:
         if cached:
 
             info(
-                "Eventos do esporte '%s' carregados do cache.",
-                sport,
+                f"Eventos de '{sport}' "
+                "carregados do cache."
             )
 
+            # Também registra o conteúdo do cache,
+            # pois precisamos saber exatamente o que está
+            # chegando ao DataManager.
+
+            if isinstance(
+                cached,
+                list,
+            ):
+
+                self._log_bookmakers(
+                    cached
+                )
+
             return cached
+
+        # --------------------------------------------------
+        # CONSULTA
+        # --------------------------------------------------
 
         endpoint = (
             f"sports/{sport}/odds"
         )
 
         params = {
+            # Região usada pela consulta.
+            #
+            # Mantemos EU por enquanto para não alterar
+            # silenciosamente o comportamento atual.
             "regions": "eu",
+
+            # Mercado principal.
             "markets": "h2h",
+
+            # Odds decimais.
             "oddsFormat": "decimal",
         }
 
         info(
-            "Consultando odds: sport='%s' | endpoint='%s'",
-            sport,
-            endpoint,
+            f"Consultando eventos para sport='{sport}'."
         )
 
         data = self._request(
@@ -564,67 +656,37 @@ class OddsAPI:
             params,
         )
 
-        prepared_events = (
-            self._prepare_events(
-                data
+        # --------------------------------------------------
+        # VALIDAÇÃO
+        # --------------------------------------------------
+
+        if not isinstance(
+            data,
+            list,
+        ):
+
+            warning(
+                "A The Odds API não retornou uma lista "
+                "de eventos."
             )
+
+            return []
+
+        info(
+            "The Odds API retornou "
+            f"{len(data)} eventos."
         )
 
         # --------------------------------------------------
-        # ESTATÍSTICAS DOS BOOKMAKERS
+        # DIAGNÓSTICO ANTES DO DATA MANAGER
         # --------------------------------------------------
 
-        total_bookmakers = 0
-        allowed_bookmakers = 0
-        rejected_bookmakers = 0
+        self._log_bookmakers(
+            data
+        )
 
-        for event in prepared_events:
-
-            bookmakers = event.get(
-                "bookmakers",
-                [],
-            )
-
-            total_bookmakers += len(
-                bookmakers
-            )
-
-            for bookmaker in bookmakers:
-
-                if bookmaker.get(
-                    "_allowed",
-                    False,
-                ):
-
-                    allowed_bookmakers += 1
-
-                else:
-
-                    rejected_bookmakers += 1
-
-            home = event.get(
-                "home_team",
-                "?",
-            )
-
-            away = event.get(
-                "away_team",
-                "?",
-            )
-
-            info(
-                "Evento %s x %s recebeu %s bookmakers da API.",
-                home,
-                away,
-                len(bookmakers),
-            )
-
-        info(
-            "Resumo bookmakers: "
-            "%s recebidas | %s autorizadas | %s não autorizadas.",
-            total_bookmakers,
-            allowed_bookmakers,
-            rejected_bookmakers,
+        self._log_markets(
+            data
         )
 
         # --------------------------------------------------
@@ -633,16 +695,38 @@ class OddsAPI:
 
         cache.set(
             cache_key,
-            prepared_events,
+            data,
             ttl=120,
         )
 
-        info(
-            "%s eventos preparados para o DataManager.",
-            len(prepared_events),
-        )
+        # --------------------------------------------------
+        # RESUMO
+        # --------------------------------------------------
 
-        return prepared_events
+        for event in data:
+
+            home_team = event.get(
+                "home_team",
+                "?",
+            )
+
+            away_team = event.get(
+                "away_team",
+                "?",
+            )
+
+            bookmakers = event.get(
+                "bookmakers",
+                [],
+            )
+
+            info(
+                f"Evento {home_team} x {away_team} "
+                f"recebeu {len(bookmakers)} bookmakers "
+                "da API."
+            )
+
+        return data
 
     # ======================================================
     # ODDS DE EVENTO ESPECÍFICO
@@ -654,10 +738,7 @@ class OddsAPI:
         event_id: str,
     ) -> Dict[str, Any]:
         """
-        Busca odds de um evento específico.
-
-        As bookmakers também passam pela mesma normalização
-        utilizada em get_events().
+        Consulta odds detalhadas de um evento específico.
         """
 
         if not sport:
@@ -688,10 +769,9 @@ class OddsAPI:
         }
 
         info(
-            "Consultando odds do evento: "
-            "sport='%s' | event_id='%s'",
-            sport,
-            event_id,
+            "Consultando odds detalhadas: "
+            f"sport='{sport}' | "
+            f"event_id='{event_id}'"
         )
 
         data = self._request(
@@ -705,97 +785,39 @@ class OddsAPI:
         ):
 
             warning(
-                "Resposta de odds do evento %s não é um objeto válido.",
-                event_id,
+                "Resposta inesperada ao consultar "
+                "odds detalhadas."
             )
 
             return {}
 
-        prepared = self._prepare_event(
-            data
+        # --------------------------------------------------
+        # DIAGNÓSTICO DO EVENTO
+        # --------------------------------------------------
+
+        bookmakers = data.get(
+            "bookmakers",
+            [],
         )
-
-        if prepared is None:
-
-            return {}
-
-        return prepared
-
-    # ======================================================
-    # DIAGNÓSTICO DAS BOOKMAKERS
-    # ======================================================
-
-    def get_events_diagnostic(
-        self,
-        sport: str,
-    ) -> List[Dict[str, Any]]:
-        """
-        Método auxiliar de diagnóstico.
-
-        Executa a consulta normalmente, mas deixa os dados
-        preparados com todas as informações necessárias
-        para verificar quais bookmakers a API realmente
-        está enviando.
-
-        Não altera a lógica principal do sistema.
-        """
 
         info(
-            "Iniciando diagnóstico de bookmakers "
-            "para sport='%s'.",
-            sport,
+            "Evento específico retornou "
+            f"{len(bookmakers)} bookmakers."
         )
 
-        events = self.get_events(
-            sport
+        # --------------------------------------------------
+        # REGISTRA KEYS
+        # --------------------------------------------------
+
+        self._log_bookmakers(
+            [data]
         )
 
-        for event in events:
+        self._log_markets(
+            [data]
+        )
 
-            home = event.get(
-                "home_team",
-                "?",
-            )
-
-            away = event.get(
-                "away_team",
-                "?",
-            )
-
-            bookmakers = event.get(
-                "bookmakers",
-                [],
-            )
-
-            info(
-                "DIAGNÓSTICO | %s x %s | bookmakers=%s",
-                home,
-                away,
-                len(bookmakers),
-            )
-
-            for bookmaker in bookmakers:
-
-                info(
-                    "DIAGNÓSTICO BOOKMAKER | "
-                    "key='%s' | title='%s' | "
-                    "normalized='%s' | allowed=%s",
-                    bookmaker.get(
-                        "_raw_key"
-                    ),
-                    bookmaker.get(
-                        "title"
-                    ),
-                    bookmaker.get(
-                        "_normalized_key"
-                    ),
-                    bookmaker.get(
-                        "_allowed",
-                        False,
-                    ),
-                )
-
-        return events
+        return data
 
 
 # ==========================================================
@@ -805,7 +827,11 @@ class OddsAPI:
 api = OddsAPI()
 
 
+# ==========================================================
+# EXPORTAÇÃO
+# ==========================================================
+
 __all__ = [
     "OddsAPI",
     "api",
-]
+                ]
