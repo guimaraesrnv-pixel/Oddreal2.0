@@ -1495,87 +1495,47 @@ class Analyzer:
 
         return values
 
-# ==========================================================
-# MELHOR OPORTUNIDADE
-# ==========================================================
 
-def best_opportunity(
-    self,
-    analyses: List[
-        Dict[str, Any]
-    ],
-) -> Optional[
-    Dict[str, Any]
-]:
-
-    if not isinstance(
-        analyses,
-        list,
-    ):
-        return None
-
-    # ------------------------------------------------------
-    # SOMENTE ANÁLISES VÁLIDAS
-    # ------------------------------------------------------
-
-    positive = [
-        item
-        for item in analyses
-        if (
-            isinstance(
-                item,
-                dict,
-            )
-            and self._safe_float(
-                item.get(
-                    "expected_value",
-                    0.0,
-                )
-            ) > 0.0
-        )
-    ]
-
-    # Nenhuma oportunidade com EV positivo
-    if not positive:
-        return None
-
-    # ------------------------------------------------------
+    # ==========================================================
     # MELHOR OPORTUNIDADE
-    # ------------------------------------------------------
-    #
-    # Prioridade:
-    #
-    # 1. EV
-    # 2. Índice OddReal
-    # 3. Probabilidade
-    #
-    # Assim o sistema não escolhe uma odd
-    # simplesmente por ser mais alta.
-    # ------------------------------------------------------
+    # ==========================================================
 
-    return max(
-        positive,
-        key=lambda item: (
-            self._safe_float(
-                item.get(
-                    "expected_value",
-                    0.0,
-                )
+    def best_opportunity(
+        self,
+        analyses: List[Dict[str, Any]],
+    ) -> Optional[Dict[str, Any]]:
+
+        if not isinstance(analyses, list):
+            return None
+
+        positive = [
+            item
+            for item in analyses
+            if (
+                isinstance(item, dict)
+                and self._safe_float(
+                    item.get("expected_value", 0.0)
+                ) > 0.0
+            )
+        ]
+
+        if not positive:
+            return None
+
+        return max(
+            positive,
+            key=lambda item: (
+                self._safe_float(
+                    item.get("expected_value", 0.0)
+                ),
+                self._safe_float(
+                    item.get("oddreal_index", 0.0)
+                ),
+                self._safe_float(
+                    item.get("probability", 0.0)
+                ),
             ),
-            self._safe_float(
-                item.get(
-                    "oddreal_index",
-                    0.0,
-                )
-            ),
-            self._safe_float(
-                item.get(
-                    "probability",
-                    0.0,
-                )
-            ),
-        ),
-    )
+        )
 
     # ==========================================================
     # MELHOR VALUE BET
@@ -1583,16 +1543,10 @@ def best_opportunity(
 
     def best_value_bet(
         self,
-        analyses: List[
-            Dict[str, Any]
-        ],
-    ) -> Optional[
-        Dict[str, Any]
-    ]:
+        analyses: List[Dict[str, Any]],
+    ) -> Optional[Dict[str, Any]]:
 
-        values = self.value_bets(
-            analyses
-        )
+        values = self.value_bets(analyses)
 
         if not values:
             return None
@@ -1601,22 +1555,13 @@ def best_opportunity(
             values,
             key=lambda item: (
                 self._safe_float(
-                    item.get(
-                        "expected_value",
-                        0.0,
-                    )
+                    item.get("expected_value", 0.0)
                 ),
                 self._safe_float(
-                    item.get(
-                        "oddreal_index",
-                        0.0,
-                    )
+                    item.get("oddreal_index", 0.0)
                 ),
                 self._safe_float(
-                    item.get(
-                        "probability",
-                        0.0,
-                    )
+                    item.get("probability", 0.0)
                 ),
             ),
         )
@@ -1626,33 +1571,22 @@ def best_opportunity(
     # ==========================================================
 
     def summary(
-    self,
-    analyses: List[
-      Dict[str, Any]
-    ],
- ) -> Dict[str, Any]:
-    
-        if not isinstance(
-            analyses,
-            list,
-        ):
+        self,
+        analyses: List[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+
+        if not isinstance(analyses, list):
             analyses = []
 
         valid = [
             item
             for item in analyses
-            if isinstance(
-                item,
-                dict,
-            )
+            if isinstance(item, dict)
         ]
 
-        values = self.value_bets(
-            valid
-        )
+        values = self.value_bets(valid)
 
         if not valid:
-
             return {
                 "total_analyses": 0,
                 "total_value_bets": 0,
@@ -1660,72 +1594,39 @@ def best_opportunity(
                 "average_ev": 0.0,
                 "best_opportunity": None,
                 "best_value_bet": None,
-                "allowed_bookmakers":
-                    sorted(
-                        ALLOWED_BOOKMAKERS
-                    ),
+                "allowed_bookmakers": sorted(ALLOWED_BOOKMAKERS),
             }
 
         indices = [
             self._safe_float(
-                item.get(
-                    "oddreal_index",
-                    0.0,
-                )
+                item.get("oddreal_index", 0.0)
             )
             for item in valid
         ]
 
         evs = [
             self._safe_float(
-                item.get(
-                    "expected_value",
-                    0.0,
-                )
+                item.get("expected_value", 0.0)
             )
             for item in valid
         ]
 
         return {
-
-            "total_analyses":
-                len(valid),
-
-            "total_value_bets":
-                len(values),
-
-            "average_index":
-                round(
-                    sum(indices)
-                    / len(indices),
-                    2,
-                )
+            "total_analyses": len(valid),
+            "total_value_bets": len(values),
+            "average_index": (
+                round(sum(indices) / len(indices), 2)
                 if indices
-                else 0.0,
-
-            "average_ev":
-                round(
-                    sum(evs)
-                    / len(evs),
-                    3,
-                )
+                else 0.0
+            ),
+            "average_ev": (
+                round(sum(evs) / len(evs), 3)
                 if evs
-                else 0.0,
-
-            "best_opportunity":
-                self.best_opportunity(
-                    valid
-                ),
-
-            "best_value_bet":
-                self.best_value_bet(
-                    valid
-                ),
-
-            "allowed_bookmakers":
-                sorted(
-                    ALLOWED_BOOKMAKERS
-                ),
+                else 0.0
+            ),
+            "best_opportunity": self.best_opportunity(valid),
+            "best_value_bet": self.best_value_bet(valid),
+            "allowed_bookmakers": sorted(ALLOWED_BOOKMAKERS),
         }
 
 
@@ -1741,9 +1642,4 @@ __all__ = [
     "analyzer",
 ]
 
-        if len(valid) < 2:
-            return 0.0
-
-        minimum = min(
      
-                
