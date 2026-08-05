@@ -19,13 +19,11 @@ A API Key nunca deve ser armazenada diretamente neste arquivo.
 from __future__ import annotations
 
 import time
-
 from typing import Any, Dict, List, Optional
 
 import requests
 
 from config.settings import settings
-
 from modules.logger import info, error
 
 
@@ -40,39 +38,79 @@ class OddsAPIClient:
         cache_seconds: int = 60,
     ) -> None:
 
-        # ==================================================
+        # ==========================================================
         # CONFIGURAÇÕES
-        # ==================================================
+        # ==========================================================
+
+        # request_timeout pode não existir no Settings.
+        # Nesse caso utilizamos 15 segundos como padrão seguro.
+        configured_timeout = getattr(
+            settings,
+            "request_timeout",
+            15,
+        )
+
+        try:
+            configured_timeout = int(
+                configured_timeout
+            )
+        except (
+            TypeError,
+            ValueError,
+        ):
+            configured_timeout = 15
+
+        if configured_timeout <= 0:
+            configured_timeout = 15
 
         self.timeout = (
-            timeout
+            int(timeout)
             if timeout is not None
-            else settings.request_timeout
+            else configured_timeout
         )
+
+        if self.timeout <= 0:
+            self.timeout = 15
+
+        # Cache configurável sem depender de atributo
+        # obrigatório no Settings.
+        configured_cache = getattr(
+            settings,
+            "cache_seconds",
+            cache_seconds,
+        )
+
+        try:
+            configured_cache = int(
+                configured_cache
+            )
+        except (
+            TypeError,
+            ValueError,
+        ):
+            configured_cache = cache_seconds
 
         self.cache_seconds = max(
             0,
-            int(cache_seconds),
+            configured_cache,
         )
 
-        # ==================================================
+        # ==========================================================
         # SESSÃO HTTP
-        # ==================================================
+        # ==========================================================
 
         self.session = requests.Session()
 
         self.session.headers.update(
             {
-                "User-Agent":
-                    "OddReal/2.0",
-                "Accept":
-                    "application/json",
+                "User-Agent": "OddReal/2.0",
+                "Accept": "application/json",
             }
         )
 
-        # ==================================================
+        # ==========================================================
         # CACHE
-        # ==================================================
+        # ==========================================================
 
         self._cached_events: Optional[
             List[Dict[str, Any]]
@@ -80,17 +118,17 @@ class OddsAPIClient:
 
         self._cache_timestamp = 0.0
 
-        # ==================================================
+        # ==========================================================
         # INFORMAÇÕES DA ÚLTIMA RESPOSTA
-        # ==================================================
+        # ==========================================================
 
         self.last_response_info: Dict[
             str, Any
         ] = {}
 
-        # ==================================================
+        # ==========================================================
         # CONTROLE DE CONSUMO
-        # ==================================================
+        # ==========================================================
 
         self.remaining_requests: Optional[
             int
@@ -118,7 +156,7 @@ class OddsAPIClient:
         """
         Retorna a chave da The Odds API.
 
-        A chave vem do Settings.
+        A chave vem do Settings/Secrets.
         Nunca deve ser exibida em logs.
         """
 
@@ -229,11 +267,9 @@ class OddsAPIClient:
         """
 
         if self._cached_events is None:
-
             return False
 
         if self.cache_seconds <= 0:
-
             return False
 
         elapsed = (
@@ -252,7 +288,6 @@ class OddsAPIClient:
         """
 
         self._cached_events = None
-
         self._cache_timestamp = 0.0
 
         info(
@@ -298,25 +333,15 @@ class OddsAPIClient:
             str,
             Any
         ] = {
-
-            "apiKey":
-                self.api_key,
-
-            "regions":
-                self.regions,
-
-            "markets":
-                self.markets,
-
-            "oddsFormat":
-                self.odds_format,
-
+            "apiKey": self.api_key,
+            "regions": self.regions,
+            "markets": self.markets,
+            "oddsFormat": self.odds_format,
         }
 
         for key, value in extra_params.items():
 
             if value is not None:
-
                 params[key] = value
 
         return params
@@ -348,8 +373,8 @@ class OddsAPIClient:
 
             message = (
                 "The Odds API não configurada. "
-                "A variável ODDS_API_KEY não foi "
-                "encontrada."
+                "A chave da API não foi encontrada "
+                "nos Secrets/configuração."
             )
 
             self.last_error = message
@@ -359,18 +384,13 @@ class OddsAPIClient:
             )
 
             self.last_response_info = {
-
-                "status_code":
-                    None,
-
-                "url":
-                    self._build_url(
-                        endpoint
-                    ),
-
-                "error":
-                    "API key não configurada.",
-
+                "status_code": None,
+                "url": self._build_url(
+                    endpoint
+                ),
+                "error": (
+                    "API key não configurada."
+                ),
             }
 
             return []
@@ -384,23 +404,25 @@ class OddsAPIClient:
         )
 
         # ------------------------------------------------------
+        # PARÂMETROS
+        # ------------------------------------------------------
+
+        request_params = (
+            params
+            if params is not None
+            else self._build_params()
+        )
+
+        # ------------------------------------------------------
         # REQUEST
         # ------------------------------------------------------
 
         try:
 
             response = self.session.get(
-
                 url,
-
-                params=(
-                    params
-                    if params is not None
-                    else self._build_params()
-                ),
-
+                params=request_params,
                 timeout=self.timeout,
-
             )
 
             # --------------------------------------------------
@@ -416,7 +438,6 @@ class OddsAPIClient:
             # --------------------------------------------------
 
             self.last_response_info = {
-
                 "status_code":
                     response.status_code,
 
@@ -430,7 +451,6 @@ class OddsAPIClient:
 
                 "used_requests":
                     self.used_requests,
-
             }
 
             # --------------------------------------------------
@@ -711,10 +731,9 @@ class OddsAPIClient:
             or self.sport
         )
 
-        selected_sport = (
-            str(selected_sport)
-            .strip()
-        )
+        selected_sport = str(
+            selected_sport
+        ).strip()
 
         if not selected_sport:
 
@@ -871,7 +890,6 @@ class OddsAPIClient:
         """
 
         return {
-
             "service":
                 "The Odds API",
 
@@ -893,6 +911,12 @@ class OddsAPIClient:
             "odds_format":
                 self.odds_format,
 
+            "timeout":
+                self.timeout,
+
+            "cache_seconds":
+                self.cache_seconds,
+
             "cache_valid":
                 self._cache_valid(),
 
@@ -904,7 +928,6 @@ class OddsAPIClient:
 
             "last_error":
                 self.last_error,
-
         }
 
     # ==========================================================
