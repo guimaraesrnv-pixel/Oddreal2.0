@@ -2,41 +2,32 @@
 OddReal 2.0
 Bookmakers
 
-Configuração central das casas de apostas consideradas pelo sistema.
+Responsabilidade:
+- normalizar identificadores de bookmakers;
+- reconhecer variações de nomes;
+- manter uma lista branca de fontes relevantes;
+- preservar o nome original recebido pela API;
+- fornecer nome de exibição;
+- permitir diagnóstico do processo de reconhecimento.
 
-IMPORTANTE:
-Este arquivo funciona como uma LISTA BRANCA.
-
-Somente bookmakers presentes nesta configuração poderão:
-
-- participar do consenso de mercado;
-- fornecer a melhor odd;
-- aparecer nas análises;
-- participar do cálculo do EV;
-- participar do Índice OddReal;
-- aparecer no dashboard.
-
-Casas desconhecidas, não configuradas ou não reconhecidas
-pela aplicação são automaticamente ignoradas.
-
-A lista pode ser alterada sem modificar o Analyzer.
+Este módulo NÃO realiza:
+- cálculo de probabilidade;
+- EV;
+- Value Bet;
+- Índice OddReal;
+- análise matemática.
 """
 
 from __future__ import annotations
 
+import re
+import unicodedata
 from typing import Dict, FrozenSet, Optional
 
 
 # ==========================================================
-# BOOKMAKERS PRINCIPAIS
+# FONTES RELEVANTES
 # ==========================================================
-
-# Nomes canônicos utilizados internamente pelo OddReal.
-#
-# IMPORTANTE:
-# Os nomes abaixo são apenas os nomes internos.
-# O arquivo também possui aliases para diferentes nomes
-# que podem ser retornados pela API.
 
 BRAZIL_PRIMARY_BOOKMAKERS: FrozenSet[str] = frozenset(
     {
@@ -54,64 +45,39 @@ BRAZIL_PRIMARY_BOOKMAKERS: FrozenSet[str] = frozenset(
 # ALIASES
 # ==========================================================
 
-# A API pode retornar pequenas diferenças no nome da casa.
-#
-# Exemplo:
-#
-# "Bet365"
-# "bet365"
-# "Bet 365"
-#
-# Todos devem ser tratados como a mesma casa.
-
 BOOKMAKER_ALIASES: Dict[str, str] = {
-
-    # ------------------------------------------------------
-    # BET365
-    # ------------------------------------------------------
-
+    # Bet365
     "bet365": "bet365",
     "bet 365": "bet365",
     "bet-365": "bet365",
+    "bet365.com": "bet365",
 
-    # ------------------------------------------------------
-    # BETANO
-    # ------------------------------------------------------
-
+    # Betano
     "betano": "betano",
     "betano brasil": "betano",
     "betano.com": "betano",
 
-    # ------------------------------------------------------
-    # SPORTINGBET
-    # ------------------------------------------------------
-
+    # Sportingbet
     "sportingbet": "sportingbet",
     "sporting bet": "sportingbet",
+    "sporting-bet": "sportingbet",
     "sportingbet brasil": "sportingbet",
+    "sportingbet.com": "sportingbet",
 
-    # ------------------------------------------------------
     # KTO
-    # ------------------------------------------------------
-
     "kto": "kto",
     "kto brasil": "kto",
     "kto.com": "kto",
 
-    # ------------------------------------------------------
-    # NOVIBET
-    # ------------------------------------------------------
-
+    # Novibet
     "novibet": "novibet",
     "novibet brasil": "novibet",
     "novibet.com": "novibet",
 
-    # ------------------------------------------------------
-    # BETNACIONAL
-    # ------------------------------------------------------
-
+    # Betnacional
     "betnacional": "betnacional",
     "bet nacional": "betnacional",
+    "betnacional brasil": "betnacional",
     "betnacional.com": "betnacional",
 }
 
@@ -121,84 +87,182 @@ BOOKMAKER_ALIASES: Dict[str, str] = {
 # ==========================================================
 
 BOOKMAKER_DISPLAY_NAMES: Dict[str, str] = {
-
     "bet365": "bet365",
-
     "betano": "Betano",
-
     "sportingbet": "Sportingbet",
-
     "kto": "KTO",
-
     "novibet": "Novibet",
-
     "betnacional": "Betnacional",
 }
 
 
 # ==========================================================
-# NORMALIZAÇÃO
+# NORMALIZAÇÃO BÁSICA
+# ==========================================================
+
+def _remove_accents(
+    value: str,
+) -> str:
+    """
+    Remove acentos sem alterar o conteúdo textual.
+    """
+
+    normalized = unicodedata.normalize(
+        "NFKD",
+        value,
+    )
+
+    return "".join(
+        char
+        for char in normalized
+        if not unicodedata.combining(char)
+    )
+
+
+def _normalize_text(
+    value: Optional[str],
+) -> str:
+    """
+    Normalização genérica para comparação.
+
+    Não decide se o bookmaker é autorizado.
+    """
+
+    if value is None:
+        return ""
+
+    value = str(value).strip().lower()
+
+    if not value:
+        return ""
+
+    value = _remove_accents(
+        value
+    )
+
+    # Remove protocolo caso apareça.
+    value = re.sub(
+        r"^https?://",
+        "",
+        value,
+    )
+
+    # Remove www.
+    value = re.sub(
+        r"^www\.",
+        "",
+        value,
+    )
+
+    # Remove espaços duplicados.
+    value = " ".join(
+        value.split()
+    )
+
+    return value
+
+
+def _compact(
+    value: str,
+) -> str:
+    """
+    Produz uma forma compacta para comparação.
+
+    Exemplos:
+
+        Bet 365
+        bet-365
+        bet_365
+        bet365
+
+    tornam-se equivalentes.
+    """
+
+    value = _normalize_text(
+        value
+    )
+
+    return re.sub(
+        r"[^a-z0-9]+",
+        "",
+        value,
+    )
+
+
+# ==========================================================
+# MAPA COMPACTADO DE ALIASES
+# ==========================================================
+
+_COMPACT_ALIASES: Dict[str, str] = {
+    _compact(alias): canonical
+    for alias, canonical
+    in BOOKMAKER_ALIASES.items()
+}
+
+
+# ==========================================================
+# NORMALIZAÇÃO DO BOOKMAKER
 # ==========================================================
 
 def normalize_bookmaker_name(
     bookmaker: Optional[str],
 ) -> Optional[str]:
     """
-    Normaliza o nome recebido da API.
+    Retorna o identificador canônico quando a fonte
+    é reconhecida.
 
-    Retorna:
+    Retorna None quando não existe correspondência.
 
-        nome canônico
-
-    ou:
-
-        None
-
-    quando o bookmaker não pertence à lista autorizada.
+    IMPORTANTE:
+    desconhecido NÃO significa automaticamente inválido;
+    significa apenas que a aplicação não possui um alias
+    conhecido para aquele identificador.
     """
 
-    if bookmaker is None:
-        return None
-
-    name = str(bookmaker).strip().lower()
-
-    if not name:
-        return None
-
-    # Normalização básica.
-    name = " ".join(
-        name.split()
+    normalized = _normalize_text(
+        bookmaker
     )
 
-    # Primeiro tenta alias exato.
+    if not normalized:
+        return None
+
+    # ------------------------------------------------------
+    # Correspondência exata
+    # ------------------------------------------------------
+
     canonical = BOOKMAKER_ALIASES.get(
-        name
+        normalized
     )
 
-    if canonical is not None:
+    if canonical:
         return canonical
 
-    # Depois tenta comparação removendo alguns
-    # caracteres comuns.
-    compact = (
-        name
-        .replace("-", "")
-        .replace("_", "")
-        .replace(".", "")
+    # ------------------------------------------------------
+    # Correspondência compactada
+    # ------------------------------------------------------
+
+    compact = _compact(
+        normalized
     )
 
-    for alias, canonical_name in BOOKMAKER_ALIASES.items():
+    canonical = _COMPACT_ALIASES.get(
+        compact
+    )
 
-        alias_compact = (
-            alias
-            .replace("-", "")
-            .replace("_", "")
-            .replace(".", "")
-            .replace(" ", "")
-        )
+    if canonical:
+        return canonical
 
-        if compact == alias_compact:
-            return canonical_name
+    # ------------------------------------------------------
+    # Correspondência direta com nome canônico
+    # ------------------------------------------------------
+
+    if compact in {
+        _compact(name)
+        for name in BRAZIL_PRIMARY_BOOKMAKERS
+    }:
+        for name in BRAZIL_PRIMARY_BOOKMAKERS:
+            if _compact(name) == compact:
+                return name
 
     return None
 
@@ -211,27 +275,8 @@ def is_allowed_bookmaker(
     bookmaker: Optional[str],
 ) -> bool:
     """
-    Informa se o bookmaker está autorizado pelo OddReal.
-    """
-
-    normalized = normalize_bookmaker_name(
-        bookmaker
-    )
-
-    return (
-        normalized in BRAZIL_PRIMARY_BOOKMAKERS
-    )
-
-
-# ==========================================================
-# NOME PARA INTERFACE
-# ==========================================================
-
-def bookmaker_display_name(
-    bookmaker: Optional[str],
-) -> str:
-    """
-    Retorna o nome amigável para exibição.
+    Retorna True somente quando o bookmaker reconhecido
+    pertence à lista branca.
     """
 
     normalized = normalize_bookmaker_name(
@@ -239,7 +284,32 @@ def bookmaker_display_name(
     )
 
     if normalized is None:
-        return "Casa não autorizada"
+        return False
+
+    return normalized in (
+        BRAZIL_PRIMARY_BOOKMAKERS
+    )
+
+
+# ==========================================================
+# NOME DE EXIBIÇÃO
+# ==========================================================
+
+def bookmaker_display_name(
+    bookmaker: Optional[str],
+) -> str:
+    """
+    Retorna o nome amigável para interface.
+    """
+
+    normalized = normalize_bookmaker_name(
+        bookmaker
+    )
+
+    if normalized is None:
+        return str(
+            bookmaker or "Fonte desconhecida"
+        )
 
     return BOOKMAKER_DISPLAY_NAMES.get(
         normalized,
@@ -248,7 +318,58 @@ def bookmaker_display_name(
 
 
 # ==========================================================
-# EXPORTAÇÃO
+# DIAGNÓSTICO
+# ==========================================================
+
+def bookmaker_diagnostics(
+    bookmaker: Optional[str],
+) -> Dict[str, object]:
+    """
+    Retorna informações suficientes para diagnosticar
+    problemas de reconhecimento sem alterar o pipeline.
+    """
+
+    original = str(
+        bookmaker or ""
+    ).strip()
+
+    normalized = normalize_bookmaker_name(
+        original
+    )
+
+    return {
+        "original": original,
+        "normalized": normalized,
+        "recognized": normalized is not None,
+        "allowed": (
+            normalized in BRAZIL_PRIMARY_BOOKMAKERS
+            if normalized is not None
+            else False
+        ),
+        "display_name": (
+            bookmaker_display_name(
+                original
+            )
+        ),
+    }
+
+
+# ==========================================================
+# LISTA DE FONTES
+# ==========================================================
+
+def allowed_bookmakers() -> FrozenSet[str]:
+    """
+    Retorna uma cópia imutável da lista branca.
+    """
+
+    return frozenset(
+        BRAZIL_PRIMARY_BOOKMAKERS
+    )
+
+
+# ==========================================================
+# EXPORTAÇÃO COMPATÍVEL COM O DATAMANAGER ATUAL
 # ==========================================================
 
 ALLOWED_BOOKMAKERS = (
@@ -264,4 +385,6 @@ __all__ = [
     "normalize_bookmaker_name",
     "is_allowed_bookmaker",
     "bookmaker_display_name",
-      ]
+    "bookmaker_diagnostics",
+    "allowed_bookmakers",
+]
