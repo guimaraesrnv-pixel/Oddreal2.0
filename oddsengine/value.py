@@ -24,9 +24,6 @@ from modules.logger import info
 
 
 class ValueBetEngine:
-    """
-    Motor matemático de Value Bets.
-    """
 
     def __init__(
         self,
@@ -39,6 +36,76 @@ class ValueBetEngine:
 
         info(
             "ValueBetEngine OddReal 2.0 iniciado."
+        )
+
+    @staticmethod
+    def _safe_float(
+        value: Any,
+        default: float = 0.0,
+    ) -> float:
+
+        try:
+            result = float(value)
+
+            if result != result:
+                return default
+
+            return result
+
+        except (
+            TypeError,
+            ValueError,
+        ):
+            return default
+
+    def implied_probability(
+        self,
+        odd: float,
+    ) -> float:
+
+        odd = self._safe_float(odd)
+
+        if odd <= 0:
+            return 0.0
+
+        return 100.0 / odd
+
+    def expected_value(
+        self,
+        probability: float,
+        odd: float,
+    ) -> float:
+        """
+        EV percentual.
+
+        probability está em 0-100.
+
+        Fórmula:
+
+        EV = ((probabilidade / 100) × odd - 1) × 100
+        """
+
+        probability = self._safe_float(
+            probability
+        )
+
+        odd = self._safe_float(
+            odd
+        )
+
+        if probability <= 0 or odd <= 0:
+            return 0.0
+
+        probability_decimal = (
+            probability / 100.0
+        )
+
+        return round(
+            (
+                probability_decimal * odd
+                - 1.0
+            ) * 100.0,
+            4,
         )
 
     # ==========================================================
