@@ -1059,11 +1059,21 @@ class Analyzer:
         # ------------------------------------------------------
 
         expected_value = (
-            valuebet_engine.expected_value(
-                probability,
-                odd,
-            )
-        )
+    valuebet_engine.expected_value(
+        probability,
+        odd,
+    )
+)
+
+info(
+    "ODDREAL DEBUG | "
+    f"{event.get('home_team', '')} × "
+    f"{event.get('away_team', '')} | "
+    f"odd={odd:.3f} | "
+    f"probability={probability:.3f}% | "
+    f"source={probability_source} | "
+    f"EV={expected_value:.3f}%"
+)
 
         # ------------------------------------------------------
         # VALUE BET
