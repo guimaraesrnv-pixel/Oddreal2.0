@@ -651,7 +651,7 @@ class Analyzer:
         )
 
     # ==========================================================
-    # EXTRAÇÃO DOS MERCADOS
+    # EXTRAÇÃO DE MERCADOS
     # ==========================================================
 
     def _extract_market_data(
@@ -665,28 +665,51 @@ class Analyzer:
         ],
     ]:
         """
-        Converte a estrutura REAL do DataManager:
+        Extrai mercados diretamente da estrutura normalizada
+        utilizada pelo DataManager.
+
+        Estrutura esperada:
 
         event
-            bookmakers
-                markets
-                    outcomes
+        └── bookmakers
+            └── markets
+                └── outcomes
 
-        para:
+        Exemplo:
 
         {
-            "h2h": {
-                "Time A": {
-                    "odds": [...],
-                    "bookmakers": [...]
+            "bookmakers": [
+                {
+                    "key": "bet365",
+                    "title": "bet365",
+                    "markets": [
+                        {
+                            "key": "h2h",
+                            "outcomes": [
+                                {
+                                    "name": "Time A",
+                                    "price": 2.10
+                                }
+                            ]
+                        }
+                    ]
                 }
-            }
+            ]
         }
 
-        Esta função NÃO utiliza "market_odds".
+        SOMENTE bookmakers autorizados participam.
+
+        O método também aceita, por compatibilidade,
+        eventos que eventualmente já possuam "market_odds".
         """
 
-        result = {}
+        result: Dict[
+            str,
+            Dict[
+                str,
+                Dict[str, Any],
+            ],
+        ] = {}
 
         if not isinstance(
             event,
@@ -694,16 +717,485 @@ class Analyzer:
         ):
             return result
 
+        # ======================================================
+        # CAMINHO PRINCIPAL
+        # Estrutura real da API:
+        #
+        # event -> bookmakers -> markets -> outcomes
+        # ======================================================
+
         bookmakers = event.get(
             "bookmakers",
             [],
         )
 
-        if not isinstance(
+        if isinstance(
             bookmakers,
             list,
         ):
-            return result
+
+            for bookmaker in bookmakers:
+
+                if not isinstance(
+                    bookmaker,
+                    dict,
+                ):
+                    continue
+
+                # --------------------------------------------------
+                # Identificação da bookmaker
+                # --------------------------------------------------
+
+                raw_bookmaker = str(
+                    bookmaker.get(
+                        "key",
+                        bookmaker.get(
+                            "title",
+                            bookmaker.get(
+                                "name",
+                                "",
+                            ),
+                        ),
+                    )
+                    or ""
+                ).strip()
+
+                if not raw_bookmaker:
+                    continue
+
+                normalized_bookmaker = (
+                    self._normalized_bookmaker(
+                        raw_bookmaker
+                    )
+                )
+
+                # --------------------------------------------------
+                # WHITELIST
+                # --------------------------------------------------
+
+                if normalized_bookmaker not in (
+                    ALLOWED_BOOKMAKERS
+                ):
+                    continue
+
+                display_name = (
+                    self._display_bookmaker(
+                        normalized_bookmaker
+                    )
+                )
+
+                # --------------------------------------------------
+                # Mercados
+                # --------------------------------------------------
+
+                markets = bookmaker.get(
+                    "markets",
+                    [],
+                )
+
+                if not isinstance(
+                    markets,
+                    list,
+                ):
+                    continue
+
+                for market in markets:
+
+                    if not isinstance(
+                        market,
+                        dict,
+                    ):
+                        continue
+
+                    market_key = str(
+                        market.get(
+                            "key",
+                            market.get(
+                                "market",
+                                "",
+                            ),
+                        )
+                        or ""
+                    ).strip()
+
+                    if not market_key:
+                        continue
+
+                    # --------------------------------------------------
+                    # Somente mercados primários
+                    # --------------------------------------------------
+
+                    if (
+                        self.PRIMARY_MARKETS
+                        and market_key
+                        not in self.PRIMARY_MARKETS
+                    ):
+                        continue
+
+                    outcomes = market.get(
+                        "outcomes",
+                        [],
+                    )
+
+                    if not isinstance(
+                        outcomes,
+                        list,
+                    ):
+                        continue
+
+                    for outcome in outcomes:
+
+                        if not isinstance(
+                            outcome,
+                            dict,
+                        ):
+                            continue
+
+                        outcome_name = str(
+                            outcome.get(
+                                "name",
+                                "",
+                            )
+                            or ""
+                        ).strip()
+
+                        if not outcome_name:
+                            continue
+
+                        odd = self._safe_float(
+                            outcome.get(
+                                "price",
+                                outcome.get(
+                                    "odd",
+                                    0.0,
+                                ),
+                            )
+                        )
+
+                        if odd <= 1.0:
+                            continue
+
+                        # --------------------------------------------------
+                        # Estrutura final
+                        # --------------------------------------------------
+
+                        result.setdefault(
+                            market_key,
+                            {},
+                        )
+
+                        result[
+                            market_key
+                        ].setdefault(
+                            outcome_name,
+                            {
+                                "odds": [],
+                                "bookmakers": [],
+                            },
+                        )
+
+                        result[
+                            market_key
+                        ][
+                            outcome_name
+                        ][
+                            "odds"
+                        ].append(
+                            odd
+                        )
+
+                        bookmaker_record = {
+                            "name":
+                                normalized_bookmaker,
+
+                            "normalized_name":
+                                normalized_bookmaker,
+
+                            "display_name":
+                                display_name,
+
+                            "odd":
+                                odd,
+                        }
+
+                        # --------------------------------------------------
+                        # Ponto, quando existir
+                        # --------------------------------------------------
+
+                        if "point" in outcome:
+
+                            point = self._safe_float(
+                                outcome.get(
+                                    "point"
+                                ),
+                                default=0.0,
+                            )
+
+                            if point != 0.0:
+
+                                bookmaker_record[
+                                    "point"
+                                ] = point
+
+                        result[
+                            market_key
+                        ][
+                            outcome_name
+                        ][
+                            "bookmakers"
+                        ].append(
+                            bookmaker_record
+                        )
+
+        # ======================================================
+        # COMPATIBILIDADE LEGADA
+        #
+        # Caso algum módulo ainda entregue:
+        #
+        # event["market_odds"]
+        #
+        # também aceitamos.
+        # ======================================================
+
+        market_odds = event.get(
+            "market_odds",
+            [],
+        )
+
+        if isinstance(
+            market_odds,
+            list,
+        ):
+
+            for item in market_odds:
+
+                if not isinstance(
+                    item,
+                    dict,
+                ):
+                    continue
+
+                market = str(
+                    item.get(
+                        "market",
+                        item.get(
+                            "market_key",
+                            "",
+                        ),
+                    )
+                    or ""
+                ).strip()
+
+                outcome = str(
+                    item.get(
+                        "outcome",
+                        item.get(
+                            "name",
+                            "",
+                        ),
+                    )
+                    or ""
+                ).strip()
+
+                raw_bookmaker = str(
+                    item.get(
+                        "bookmaker",
+                        item.get(
+                            "key",
+                            "",
+                        ),
+                    )
+                    or ""
+                ).strip()
+
+                odd = self._safe_float(
+                    item.get(
+                        "odd",
+                        item.get(
+                            "price",
+                            0.0,
+                        ),
+                    )
+                )
+
+                if not market:
+                    continue
+
+                if not outcome:
+                    continue
+
+                if not raw_bookmaker:
+                    continue
+
+                if odd <= 1.0:
+                    continue
+
+                normalized_bookmaker = (
+                    self._normalized_bookmaker(
+                        raw_bookmaker
+                    )
+                )
+
+                if normalized_bookmaker not in (
+                    ALLOWED_BOOKMAKERS
+                ):
+                    continue
+
+                if (
+                    self.PRIMARY_MARKETS
+                    and market not in self.PRIMARY_MARKETS
+                ):
+                    continue
+
+                display_name = (
+                    self._display_bookmaker(
+                        normalized_bookmaker
+                    )
+                )
+
+                result.setdefault(
+                    market,
+                    {},
+                )
+
+                result[
+                    market
+                ].setdefault(
+                    outcome,
+                    {
+                        "odds": [],
+                        "bookmakers": [],
+                    },
+                )
+
+                result[
+                    market
+                ][
+                    outcome
+                ][
+                    "odds"
+                ].append(
+                    odd
+                )
+
+                result[
+                    market
+                ][
+                    outcome
+                ][
+                    "bookmakers"
+                ].append(
+                    {
+                        "name":
+                            normalized_bookmaker,
+
+                        "normalized_name":
+                            normalized_bookmaker,
+
+                        "display_name":
+                            display_name,
+
+                        "odd":
+                            odd,
+                    }
+                )
+
+        # ======================================================
+        # REMOVER DUPLICATAS
+        #
+        # Pode existir duplicação caso um evento contenha
+        # simultaneamente bookmakers e market_odds.
+        # ======================================================
+
+        for market, outcomes in result.items():
+
+            for outcome_name, data in outcomes.items():
+
+                bookmakers_data = data.get(
+                    "bookmakers",
+                    [],
+                )
+
+                unique_bookmakers = {}
+
+                for bookmaker in bookmakers_data:
+
+                    if not isinstance(
+                        bookmaker,
+                        dict,
+                    ):
+                        continue
+
+                    bookmaker_name = str(
+                        bookmaker.get(
+                            "normalized_name",
+                            bookmaker.get(
+                                "name",
+                                "",
+                            ),
+                        )
+                        or ""
+                    ).strip()
+
+                    odd = self._safe_float(
+                        bookmaker.get(
+                            "odd",
+                            0.0,
+                        )
+                    )
+
+                    if (
+                        not bookmaker_name
+                        or odd <= 1.0
+                    ):
+                        continue
+
+                    # Mantém a maior odd daquela bookmaker.
+                    if (
+                        bookmaker_name
+                        not in unique_bookmakers
+                        or odd
+                        > self._safe_float(
+                            unique_bookmakers[
+                                bookmaker_name
+                            ].get(
+                                "odd",
+                                0.0,
+                            )
+                        )
+                    ):
+                        unique_bookmakers[
+                            bookmaker_name
+                        ] = bookmaker
+
+                cleaned_bookmakers = list(
+                    unique_bookmakers.values()
+                )
+
+                data[
+                    "bookmakers"
+                ] = cleaned_bookmakers
+
+                data[
+                    "odds"
+                ] = [
+                    self._safe_float(
+                        bookmaker.get(
+                            "odd",
+                            0.0,
+                        )
+                    )
+                    for bookmaker
+                    in cleaned_bookmakers
+                    if self._safe_float(
+                        bookmaker.get(
+                            "odd",
+                            0.0,
+                        )
+                    ) > 1.0
+                ]
+
+        return result
 
         # ======================================================
         # BOOKMAKERS
