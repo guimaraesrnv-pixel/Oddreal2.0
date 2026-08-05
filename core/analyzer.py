@@ -1626,12 +1626,12 @@ def best_opportunity(
     # ==========================================================
 
     def summary(
-        self,
-        analyses: List[
-            Dict[str, Any
-        ],
-    ) -> Dict[str, Any]:
-
+    self,
+    analyses: List[
+      Dict[str, Any]
+    ],
+ ) -> Dict[str, Any]:
+    
         if not isinstance(
             analyses,
             list,
