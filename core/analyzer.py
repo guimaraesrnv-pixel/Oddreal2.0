@@ -744,11 +744,12 @@ class Analyzer:
 
         if market_probability <= 0:
 
-            probability = (
-                valuebet_engine.implied_probability(
-                    odd
-                )
-            )
+        probability = self._calculate_fair_probability(
+          event=event,
+          selected_market=best_odd.get("market", ""),
+          selected_outcome=selected_outcome,
+        )
+
 
             probability_source = (
                 "implicit_odds_fallback"
@@ -769,10 +770,10 @@ class Analyzer:
         # ======================================================
 
         expected_value = (
-            valuebet_engine.expected_value(
-                probability,
-                odd,
-            )
+          valuebet_engine.expected_value(
+            probability,
+            odd,
+          )
         )
 
         # ======================================================
