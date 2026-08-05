@@ -32,13 +32,16 @@ from typing import Any, Dict, List, Optional
 
 from modules.logger import info, error
 
+
 try:
     from config.bookmakers import (
         ALLOWED_BOOKMAKERS,
         normalize_bookmaker_name,
         bookmaker_display_name,
     )
+
 except Exception as exc:
+
     error(
         "Não foi possível carregar config.bookmakers: "
         f"{exc}"
@@ -111,11 +114,13 @@ class DataManager:
             return default
 
         try:
+
             result = str(
                 value
             ).strip()
 
         except Exception:
+
             return default
 
         return (
@@ -243,8 +248,7 @@ class DataManager:
         """
         Verifica se a bookmaker está autorizada.
 
-        Importante:
-        a função é tolerante a diferentes formatos
+        A função é tolerante a diferentes formatos
         de ALLOWED_BOOKMAKERS.
         """
 
@@ -290,6 +294,7 @@ class DataManager:
                 )
 
             except Exception:
+
                 continue
 
         if normalized_key in normalized_allowed:
@@ -546,6 +551,7 @@ class DataManager:
                 )
 
                 if result is not None:
+
                     cleaned.append(
                         result
                     )
@@ -817,6 +823,130 @@ class DataManager:
         return cleaned_events
 
     # ==========================================================
+    # PREPARAÇÃO DE EVENTOS JÁ LIMPOS
+    # ==========================================================
+
+    def _prepare_clean_events(
+        self,
+        cleaned_events: List[
+            Dict[str, Any]
+        ],
+    ) -> List[
+        Dict[str, Any]
+    ]:
+        """
+        Prepara eventos que já foram limpos.
+
+        Evita executar clean_events() novamente.
+        """
+
+        if not isinstance(
+            cleaned_events,
+            list,
+        ):
+            return []
+
+        prepared: List[
+            Dict[str, Any]
+        ] = []
+
+        for event in cleaned_events:
+
+            if not isinstance(
+                event,
+                dict,
+            ):
+                continue
+
+            bookmakers = event.get(
+                "bookmakers",
+                [],
+            )
+
+            if not isinstance(
+                bookmakers,
+                list,
+            ):
+                continue
+
+            usable_bookmakers: List[
+                Dict[str, Any]
+            ] = []
+
+            for bookmaker in bookmakers:
+
+                if not isinstance(
+                    bookmaker,
+                    dict,
+                ):
+                    continue
+
+                markets = bookmaker.get(
+                    "markets",
+                    [],
+                )
+
+                if not isinstance(
+                    markets,
+                    list,
+                ):
+                    continue
+
+                usable_markets = [
+                    market
+                    for market in markets
+                    if (
+                        isinstance(
+                            market,
+                            dict,
+                        )
+                        and isinstance(
+                            market.get(
+                                "outcomes"
+                            ),
+                            list,
+                        )
+                        and bool(
+                            market.get(
+                                "outcomes"
+                            )
+                        )
+                    )
+                ]
+
+                if not usable_markets:
+                    continue
+
+                cleaned_bookmaker = deepcopy(
+                    bookmaker
+                )
+
+                cleaned_bookmaker[
+                    "markets"
+                ] = usable_markets
+
+                usable_bookmakers.append(
+                    cleaned_bookmaker
+                )
+
+            if not usable_bookmakers:
+                continue
+
+            prepared_event = deepcopy(
+                event
+            )
+
+            prepared_event[
+                "bookmakers"
+            ] = usable_bookmakers
+
+            prepared.append(
+                prepared_event
+            )
+
+        return prepared
+
+    # ==========================================================
     # EXTRAÇÃO DE ODDS
     # ==========================================================
 
@@ -1037,7 +1167,6 @@ class DataManager:
                             ),
 
                             "odd": odd,
-
                         }
 
                         if "point" in outcome:
@@ -1051,6 +1180,7 @@ class DataManager:
                             )
 
                             if point is not None:
+
                                 record[
                                     "point"
                                 ] = point
@@ -1101,75 +1231,11 @@ class DataManager:
             )
         )
 
-        prepared: List[
-            Dict[str, Any]
-        ] = []
-
-        for event in cleaned_events:
-
-            bookmakers = (
-                event.get(
-                    "bookmakers",
-                    [],
-                )
+        prepared = (
+            self._prepare_clean_events(
+                cleaned_events
             )
-
-            if not isinstance(
-                bookmakers,
-                list,
-            ):
-                continue
-
-            if not bookmakers:
-                continue
-
-            usable_bookmakers = []
-
-            for bookmaker in bookmakers:
-
-                if not isinstance(
-                    bookmaker,
-                    dict,
-                ):
-                    continue
-
-                markets = bookmaker.get(
-                    "markets",
-                    [],
-                )
-
-                if not isinstance(
-                    markets,
-                    list,
-                ):
-                    continue
-
-                if markets:
-
-                    usable_bookmakers.append(
-                        bookmaker
-                    )
-
-            if not usable_bookmakers:
-                continue
-
-            prepared_event = (
-                deepcopy(
-                    event
-                )
-            )
-
-            prepared_event[
-                "bookmakers"
-            ] = usable_bookmakers
-
-            prepared.append(
-                prepared_event
-            )
-
-        # ------------------------------------------------------
-        # Registros individuais de odds
-        # ------------------------------------------------------
+        )
 
         records = (
             self.extract_odds_records(
@@ -1446,7 +1512,6 @@ class DataManager:
             "processed_at": (
                 self.last_processed_at
             ),
-
         }
 
     # ==========================================================
@@ -1479,7 +1544,6 @@ class DataManager:
             ),
 
             "summary": self.summary(),
-
         }
 
     # ==========================================================
@@ -1531,23 +1595,42 @@ class DataManager:
             )
         )
 
+        # ------------------------------------------------------
+        # Limpeza única
+        # ------------------------------------------------------
+
         clean_events = (
             self.clean_events(
                 events
             )
         )
 
+        # ------------------------------------------------------
+        # Preparação sem limpar novamente
+        # ------------------------------------------------------
+
         analysis_events = (
-            self.prepare_for_analysis(
+            self._prepare_clean_events(
                 clean_events
             )
         )
+
+        # ------------------------------------------------------
+        # Registros individuais de odds
+        # ------------------------------------------------------
 
         analysis_records = (
             self.extract_odds_records(
                 analysis_events,
                 allowed_only=True,
             )
+        )
+
+        info(
+            "DataManager concluiu processamento: "
+            f"{len(clean_events)} eventos limpos, "
+            f"{len(analysis_events)} eventos preparados, "
+            f"{len(analysis_records)} registros de odds."
         )
 
         return {
@@ -1571,7 +1654,6 @@ class DataManager:
             "summary": self.summary(
                 clean_events
             ),
-
         }
 
 
@@ -1585,6 +1667,4 @@ data_manager = DataManager()
 __all__ = [
     "DataManager",
     "data_manager",
-]
-
-                    
+                ]
