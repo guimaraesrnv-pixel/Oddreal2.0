@@ -321,64 +321,51 @@ class ValueBetEngine:
     # ==========================================================
 
     def expected_value(
-        self,
-        probability: float,
-        odd: float,
-    ) -> Optional[float]:
-        """
-        Calcula EV percentual.
+    def expected_value(
+    self,
+    probability: float,
+    odd: float,
+) -> float:
+    """
+    EV percentual.
 
-        probability:
-            percentual de 0 a 100.
+    probability:
+        probabilidade justa em 0-100.
 
-        odd:
-            preço que está sendo avaliado.
+    odd:
+        odd decimal.
 
-        Fórmula:
+    Exemplo:
 
-            EV = (P × odd) - 100
+        probability = 15
+        odd = 8
 
-        IMPORTANTE:
+        EV = (0.15 × 8 - 1) × 100
+           = 20%
+    """
 
-        A probabilidade precisa ser independente
-        da odd avaliada.
+    probability = self._safe_float(
+        probability
+    )
 
-        Se probability for 11,76% e odd for 8,50:
+    odd = self._safe_float(
+        odd
+    )
 
-            EV = 11,76 × 8,50 - 100
-            ≈ 0%
+    if probability <= 0 or odd <= 0:
+        return 0.0
 
-        Isso é exatamente o comportamento que
-        queremos evitar no cálculo de Value Bet.
-        """
+    probability_decimal = (
+        probability / 100.0
+    )
 
-        probability = self._safe_float(
-            probability
-        )
-
-        odd = self._safe_float(
-            odd
-        )
-
-        if (
-            probability <= 0
-            or odd <= 1.0
-        ):
-
-            return None
-
-        return round(
-            (
-                (
-                    probability
-                    / 100.0
-                )
-                * odd
-                - 1.0
-            )
-            * 100.0,
-            4,
-        )
+    return round(
+        (
+            probability_decimal * odd
+            - 1.0
+        ) * 100.0,
+        4,
+    )
 
     # ==========================================================
     # VALUE BET
