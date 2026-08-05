@@ -4,93 +4,49 @@ Motor de Cálculo de Odds
 
 Responsável por:
 
-- Probabilidade implícita
-- Valor esperado (EV)
-- Índice OddReal
-- Nível de confiança
-- Nível de risco
-- Consenso de mercado
-- Variação da odd
-- Classificação de Value Bet
+- Probabilidade implícita;
+- Probabilidade estimada pelo OddReal;
+- Valor esperado (EV);
+- Índice OddReal;
+- Nível de confiança;
+- Nível de risco;
+- Consenso de mercado;
+- Variação da odd;
+- Classificação de Value Bet.
 
-Todas as probabilidades são trabalhadas em percentual:
-0 a 100.
+IMPORTANTE:
 
-Todas as odds são trabalhadas no formato decimal.
+A probabilidade implícita da odd NÃO é considerada uma
+probabilidade estimada pelo OddReal.
+
+Exemplo:
+
+Odd = 2.00
+Probabilidade implícita = 50%
+
+Isso NÃO significa que o OddReal estima 50%.
+
+Para calcular EV de forma real, o sistema precisa de uma
+probabilidade independente fornecida pelo Analyzer,
+modelo estatístico ou outra camada quantitativa.
+
+Quando essa probabilidade independente não existir,
+o EV será considerado 0 e a oportunidade NÃO será
+classificada como Value Bet.
 """
 
 from __future__ import annotations
 
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 
 class OddsEngine:
     """
-    Motor quantitativo central do OddReal 2.0.
+    Motor quantitativo central do OddReal.
 
-    Este módulo é responsável exclusivamente pelos
-    cálculos matemáticos utilizados pelo sistema.
-
-    Não realiza:
-    - chamadas de API;
-    - acesso ao banco de dados;
-    - geração de textos por IA;
-    - interface gráfica;
-    - coleta de eventos.
+    Todas as probabilidades expostas ao restante do sistema
+    são representadas em percentual, entre 0 e 100.
     """
-
-    def __init__(
-        self,
-        minimum_ev: float = 5.0,
-    ) -> None:
-
-        self.minimum_ev = float(
-            minimum_ev
-        )
-
-    # ==========================================================
-    # UTILITÁRIOS
-    # ==========================================================
-
-    @staticmethod
-    def _safe_float(
-        value: Any,
-        default: float = 0.0,
-    ) -> float:
-        """
-        Converte um valor para float com segurança.
-        """
-
-        try:
-
-            return float(
-                value
-            )
-
-        except (
-            TypeError,
-            ValueError,
-        ):
-
-            return default
-
-    @staticmethod
-    def _clamp(
-        value: float,
-        minimum: float,
-        maximum: float,
-    ) -> float:
-        """
-        Mantém um valor dentro de um intervalo.
-        """
-
-        return max(
-            minimum,
-            min(
-                value,
-                maximum,
-            ),
-        )
 
     # ==========================================================
     # PROBABILIDADE IMPLÍCITA
@@ -106,31 +62,140 @@ class OddsEngine:
         Exemplo:
 
             Odd = 2.00
-            Probabilidade = 50%
+            Probabilidade implícita = 50%
+
+        Esta probabilidade representa o preço do mercado.
+
+        Ela NÃO representa uma previsão independente do OddReal.
         """
 
-        odd_value = self._safe_float(
-            odd
-        )
-
-        if odd_value <= 0:
-
+        try:
+            odd = float(odd)
+        except (TypeError, ValueError):
             return 0.0
 
-        probability = (
-            100.0 / odd_value
+        if odd <= 0:
+            return 0.0
+
+        probability = 100.0 / odd
+
+        return round(
+            max(
+                0.0,
+                min(
+                    probability,
+                    100.0,
+                ),
+            ),
+            2,
         )
 
-        probability = self._clamp(
-            probability,
+    # ==========================================================
+    # NORMALIZAÇÃO DE PROBABILIDADE
+    # ==========================================================
+
+    @staticmethod
+    def normalize_probability(
+        probability: Any,
+    ) -> Optional[float]:
+        """
+        Normaliza uma probabilidade para percentual.
+
+        Aceita:
+
+            60
+            60.0
+            0.60
+
+        Valores entre 0 e 1 são interpretados como
+        probabilidade decimal.
+
+        Valores acima de 1 são interpretados como percentual.
+
+        Retorna None quando não existe uma probabilidade válida.
+        """
+
+        if probability is None:
+            return None
+
+        try:
+            value = float(probability)
+        except (TypeError, ValueError):
+            return None
+
+        if value < 0:
+            return None
+
+        # Probabilidade decimal.
+        if 0.0 <= value <= 1.0:
+            value *= 100.0
+
+        value = max(
             0.0,
-            100.0,
+            min(
+                value,
+                100.0,
+            ),
         )
 
         return round(
-            probability,
+            value,
             2,
         )
+
+    # ==========================================================
+    # PROBABILIDADE ESTIMADA
+    # ==========================================================
+
+    def get_estimated_probability(
+        self,
+        event: Dict[str, Any],
+    ) -> Optional[float]:
+        """
+        Procura uma probabilidade independente calculada
+        pelo OddReal.
+
+        A prioridade é:
+
+        1. estimated_probability
+        2. model_probability
+        3. fair_probability
+        4. probability
+        5. probability_estimate
+        6. win_probability
+
+        IMPORTANTE:
+
+        "confidence" NÃO é utilizada como probabilidade.
+
+        Confiança e probabilidade são indicadores diferentes.
+        """
+
+        if not isinstance(event, dict):
+            return None
+
+        probability_keys = (
+            "estimated_probability",
+            "model_probability",
+            "fair_probability",
+            "probability",
+            "probability_estimate",
+            "win_probability",
+        )
+
+        for key in probability_keys:
+
+            if key not in event:
+                continue
+
+            probability = self.normalize_probability(
+                event.get(key)
+            )
+
+            if probability is not None:
+                return probability
+
+        return None
 
     # ==========================================================
     # VALOR ESPERADO
@@ -142,7 +207,7 @@ class OddsEngine:
         odd: float,
     ) -> float:
         """
-        Calcula o Valor Esperado em percentual.
+        Calcula o Valor Esperado (EV).
 
         probability:
             Probabilidade estimada em percentual.
@@ -152,36 +217,43 @@ class OddsEngine:
 
         Fórmula:
 
-            EV = ((probabilidade / 100) × odd - 1) × 100
+            EV = (p × odd) - 1
+
+        O resultado é convertido para percentual.
+
+        Exemplo:
+
+            Probabilidade estimada = 60%
+            Odd = 2.00
+
+            EV = (0.60 × 2.00) - 1
+               = 0.20
+               = 20%
         """
 
-        probability_value = (
-            self._safe_float(
+        normalized_probability = (
+            self.normalize_probability(
                 probability
             )
         )
 
-        odd_value = self._safe_float(
-            odd
-        )
-
-        if odd_value <= 0:
-
+        if normalized_probability is None:
             return 0.0
 
-        probability_value = self._clamp(
-            probability_value,
-            0.0,
-            100.0,
-        )
+        try:
+            odd = float(odd)
+        except (TypeError, ValueError):
+            return 0.0
+
+        if odd <= 0:
+            return 0.0
 
         probability_decimal = (
-            probability_value / 100.0
+            normalized_probability / 100.0
         )
 
         ev = (
-            probability_decimal
-            * odd_value
+            probability_decimal * odd
         ) - 1.0
 
         return round(
@@ -199,53 +271,67 @@ class OddsEngine:
         ev: float,
     ) -> int:
         """
-        Calcula o Índice OddReal de 0 a 100.
+        Calcula o Índice OddReal.
 
         O índice combina:
 
         - probabilidade estimada;
-        - EV positivo.
+        - valor esperado.
 
-        O EV possui contribuição limitada para evitar
-        que valores extremos dominem a pontuação.
+        O resultado varia entre 0 e 100.
+
+        IMPORTANTE:
+
+        O índice somente deve ser interpretado como indicador
+        quantitativo quando existir uma probabilidade estimada
+        independente do preço da odd.
         """
 
-        probability_value = (
-            self._safe_float(
+        normalized_probability = (
+            self.normalize_probability(
                 probability
             )
         )
 
-        ev_value = self._safe_float(
-            ev
-        )
+        try:
+            ev = float(ev)
+        except (TypeError, ValueError):
+            ev = 0.0
 
-        probability_value = self._clamp(
-            probability_value,
+        if normalized_probability is None:
+            return 0
+
+        normalized_probability = max(
             0.0,
-            100.0,
+            min(
+                normalized_probability,
+                100.0,
+            ),
         )
 
         positive_ev = max(
             0.0,
-            ev_value,
+            ev,
         )
 
+        # Limita a contribuição do EV.
         ev_component = min(
             positive_ev * 0.75,
             25.0,
         )
 
         score = (
-            probability_value * 0.75
+            normalized_probability * 0.75
         ) + ev_component
 
-        return int(
-            self._clamp(
-                round(score),
-                0,
+        return max(
+            0,
+            min(
+                int(
+                    round(score)
+                ),
                 100,
-            )
+            ),
         )
 
     # ==========================================================
@@ -257,25 +343,21 @@ class OddsEngine:
         index: int,
     ) -> str:
         """
-        Classifica o Índice OddReal.
+        Classifica a força quantitativa da oportunidade.
         """
 
-        index_value = int(
-            self._safe_float(
-                index
-            )
-        )
+        try:
+            index = int(index)
+        except (TypeError, ValueError):
+            index = 0
 
-        if index_value >= 85:
-
+        if index >= 85:
             return "Muito Alta"
 
-        if index_value >= 70:
-
+        if index >= 70:
             return "Alta"
 
-        if index_value >= 55:
-
+        if index >= 55:
             return "Média"
 
         return "Baixa"
@@ -290,33 +372,37 @@ class OddsEngine:
         ev: float,
     ) -> str:
         """
-        Classificação auxiliar de risco.
+        Classifica o risco utilizando os indicadores
+        quantitativos disponíveis.
 
-        Não representa garantia de resultado.
+        Esta classificação não representa garantia
+        de resultado.
         """
 
-        probability_value = (
-            self._safe_float(
+        normalized_probability = (
+            self.normalize_probability(
                 probability
             )
         )
 
-        ev_value = self._safe_float(
-            ev
-        )
+        try:
+            ev = float(ev)
+        except (TypeError, ValueError):
+            return "Alto"
+
+        if normalized_probability is None:
+            return "Alto"
 
         if (
-            probability_value >= 70
-            and ev_value >= 10
+            normalized_probability >= 70
+            and ev >= 10
         ):
-
             return "Baixo"
 
         if (
-            probability_value >= 55
-            and ev_value >= 5
+            normalized_probability >= 55
+            and ev >= 5
         ):
-
             return "Moderado"
 
         return "Alto"
@@ -327,9 +413,7 @@ class OddsEngine:
 
     def market_consensus(
         self,
-        bookmakers: List[
-            Dict[str, Any]
-        ],
+        bookmakers: List[Dict[str, Any]],
     ) -> float:
         """
         Calcula a média das odds disponíveis.
@@ -343,16 +427,10 @@ class OddsEngine:
             ]
         """
 
-        if not isinstance(
-            bookmakers,
-            list,
-        ):
-
+        if not isinstance(bookmakers, list):
             return 0.0
 
-        odds: List[
-            float
-        ] = []
+        odds: List[float] = []
 
         for bookmaker in bookmakers:
 
@@ -360,28 +438,25 @@ class OddsEngine:
                 bookmaker,
                 dict,
             ):
-
                 continue
 
-            odd = self._safe_float(
-                bookmaker.get(
-                    "odd"
-                )
+            odd = bookmaker.get(
+                "odd"
             )
 
-            if odd > 0:
+            try:
+                odd = float(odd)
+            except (TypeError, ValueError):
+                continue
 
-                odds.append(
-                    odd
-                )
+            if odd > 0:
+                odds.append(odd)
 
         if not odds:
-
             return 0.0
 
         return round(
-            sum(odds)
-            / len(odds),
+            sum(odds) / len(odds),
             2,
         )
 
@@ -395,38 +470,35 @@ class OddsEngine:
         average_odd: float,
     ) -> float:
         """
-        Calcula a diferença percentual entre a melhor odd
-        e a média do mercado.
+        Calcula a variação da melhor odd em relação
+        à média do mercado.
 
         Exemplo:
 
             Melhor odd = 2.20
             Média = 2.00
 
-            Resultado = +10%
+            Variação = +10%
         """
 
-        best_value = self._safe_float(
-            best_odd
-        )
-
-        average_value = self._safe_float(
-            average_odd
-        )
+        try:
+            best_odd = float(best_odd)
+            average_odd = float(average_odd)
+        except (TypeError, ValueError):
+            return 0.0
 
         if (
-            best_value <= 0
-            or average_value <= 0
+            best_odd <= 0
+            or average_odd <= 0
         ):
-
             return 0.0
 
         variation = (
             (
-                best_value
-                - average_value
+                best_odd
+                - average_odd
             )
-            / average_value
+            / average_odd
         ) * 100.0
 
         return round(
@@ -441,98 +513,30 @@ class OddsEngine:
     def is_value_bet(
         self,
         ev: float,
-        minimum_ev: float | None = None,
+        minimum_ev: float = 5.0,
+        probability_available: bool = True,
     ) -> bool:
         """
-        Determina se o EV ultrapassa o limite configurado.
+        Determina se uma oportunidade é Value Bet.
+
+        Para ser Value Bet:
+
+        1. Deve existir probabilidade estimada independente;
+        2. O EV deve atingir o limite mínimo.
+
+        O padrão é EV >= 5%.
         """
 
-        ev_value = self._safe_float(
-            ev
-        )
+        if not probability_available:
+            return False
 
-        threshold = (
-            self.minimum_ev
-            if minimum_ev is None
-            else self._safe_float(
-                minimum_ev,
-                self.minimum_ev,
-            )
-        )
+        try:
+            ev = float(ev)
+            minimum_ev = float(minimum_ev)
+        except (TypeError, ValueError):
+            return False
 
-        return (
-            ev_value >= threshold
-        )
-
-    # ==========================================================
-    # EXTRAÇÃO DA PROBABILIDADE
-    # ==========================================================
-
-    def _get_probability(
-        self,
-        event: Dict[str, Any],
-        odd: float,
-    ) -> float:
-        """
-        Obtém a probabilidade estimada do evento.
-
-        Ordem de prioridade:
-
-        1. probability
-        2. estimated_probability
-        3. confidence
-
-        Se nenhuma estiver disponível,
-        utiliza a probabilidade implícita da odd.
-
-        Isso mantém compatibilidade com módulos anteriores
-        sem deixar 'confidence' substituir silenciosamente
-        a probabilidade principal quando ela existir.
-        """
-
-        probability_keys = (
-            "probability",
-            "estimated_probability",
-            "confidence",
-        )
-
-        for key in probability_keys:
-
-            value = event.get(
-                key
-            )
-
-            if value is None:
-
-                continue
-
-            try:
-
-                probability = float(
-                    value
-                )
-
-            except (
-                TypeError,
-                ValueError,
-            ):
-
-                continue
-
-            if probability > 0:
-
-                return round(
-                    self._clamp(
-                        probability,
-                        0.0,
-                        100.0,
-                    ),
-                    2,
-                )
-
-        return self.implied_probability(
-            odd
-        )
+        return ev >= minimum_ev
 
     # ==========================================================
     # ANÁLISE COMPLETA DO EVENTO
@@ -543,31 +547,42 @@ class OddsEngine:
         event: Dict[str, Any],
     ) -> Dict[str, Any]:
         """
-        Executa todos os cálculos quantitativos de um evento.
+        Executa a análise quantitativa completa de um evento.
 
-        O evento deve conter:
+        O evento deve possuir uma estrutura semelhante a:
 
             {
+                "home_team": "...",
+                "away_team": "...",
                 "best_odd": {
                     "odd": 2.10,
+                    "outcome": "...",
                     "bookmaker": "...",
-                    "market": "...",
-                    "outcome": "..."
-                }
+                    "market": "h2h"
+                },
+                "probability": 58.0
             }
 
-        A probabilidade já calculada por outra camada,
-        quando existente, é preservada.
+        A probabilidade pode ser fornecida pelo Analyzer.
 
-        Caso não exista, utiliza-se a probabilidade implícita.
+        Caso não exista uma probabilidade independente:
+
+            - probability = 0
+            - EV = 0
+            - índice = 0
+            - Value Bet = False
+            - risco = Alto
+
+        A probabilidade implícita continua disponível através
+        do campo "implied_probability".
         """
 
-        if not isinstance(
-            event,
-            dict,
-        ):
-
+        if not isinstance(event, dict):
             return {}
+
+        # ------------------------------------------------------
+        # MELHOR ODD
+        # ------------------------------------------------------
 
         best = event.get(
             "best_odd"
@@ -581,6 +596,7 @@ class OddsEngine:
             return {
                 **event,
                 "odd": 0.0,
+                "implied_probability": 0.0,
                 "probability": 0.0,
                 "expected_value": 0.0,
                 "oddreal_index": 0,
@@ -589,19 +605,28 @@ class OddsEngine:
                 "market_variation": 0.0,
                 "risk": "Alto",
                 "is_value_bet": False,
+                "probability_available": False,
             }
 
-        odd = self._safe_float(
-            best.get(
-                "odd"
-            )
+        # ------------------------------------------------------
+        # ODD
+        # ------------------------------------------------------
+
+        odd = best.get(
+            "odd"
         )
+
+        try:
+            odd = float(odd)
+        except (TypeError, ValueError):
+            odd = 0.0
 
         if odd <= 0:
 
             return {
                 **event,
                 "odd": 0.0,
+                "implied_probability": 0.0,
                 "probability": 0.0,
                 "expected_value": 0.0,
                 "oddreal_index": 0,
@@ -610,49 +635,95 @@ class OddsEngine:
                 "market_variation": 0.0,
                 "risk": "Alto",
                 "is_value_bet": False,
+                "probability_available": False,
             }
 
         # ------------------------------------------------------
-        # PROBABILIDADE
+        # PROBABILIDADE IMPLÍCITA
         # ------------------------------------------------------
 
-        probability = (
-            self._get_probability(
-                event,
+        implied_probability = (
+            self.implied_probability(
+                odd
+            )
+        )
+
+        # ------------------------------------------------------
+        # PROBABILIDADE ESTIMADA
+        # ------------------------------------------------------
+
+        estimated_probability = (
+            self.get_estimated_probability(
+                event
+            )
+        )
+
+        probability_available = (
+            estimated_probability is not None
+        )
+
+        if probability_available:
+
+            probability = (
+                estimated_probability
+                or 0.0
+            )
+
+            ev = self.expected_value(
+                probability,
                 odd,
             )
-        )
 
-        # ------------------------------------------------------
-        # EV
-        # ------------------------------------------------------
-
-        ev = self.expected_value(
-            probability,
-            odd,
-        )
-
-        # ------------------------------------------------------
-        # ÍNDICE
-        # ------------------------------------------------------
-
-        index = self.oddreal_index(
-            probability,
-            ev,
-        )
-
-        # ------------------------------------------------------
-        # CONFIANÇA
-        # ------------------------------------------------------
-
-        confidence_level = (
-            self.confidence_level(
-                index
+            index = self.oddreal_index(
+                probability,
+                ev,
             )
-        )
+
+            confidence_level = (
+                self.confidence_level(
+                    index
+                )
+            )
+
+            risk = self.risk_level(
+                probability,
+                ev,
+            )
+
+            value_bet = self.is_value_bet(
+                ev,
+                probability_available=True,
+            )
+
+        else:
+
+            # --------------------------------------------------
+            # SEM PROBABILIDADE INDEPENDENTE
+            # --------------------------------------------------
+            #
+            # NÃO usamos a probabilidade implícita
+            # para calcular EV.
+            #
+            # Isso evita o problema:
+            #
+            # (1 / odd × odd) - 1 = 0
+            #
+            # --------------------------------------------------
+
+            probability = 0.0
+
+            ev = 0.0
+
+            index = 0
+
+            confidence_level = "Baixa"
+
+            risk = "Alto"
+
+            value_bet = False
 
         # ------------------------------------------------------
-        # ODDS DO MERCADO
+        # MERCADO
         # ------------------------------------------------------
 
         bookmakers = event.get(
@@ -664,7 +735,6 @@ class OddsEngine:
             bookmakers,
             list,
         ):
-
             bookmakers = []
 
         average_odd = (
@@ -673,33 +743,10 @@ class OddsEngine:
             )
         )
 
-        # ------------------------------------------------------
-        # VARIAÇÃO
-        # ------------------------------------------------------
-
         variation = (
             self.market_variation(
                 odd,
                 average_odd,
-            )
-        )
-
-        # ------------------------------------------------------
-        # RISCO
-        # ------------------------------------------------------
-
-        risk = self.risk_level(
-            probability,
-            ev,
-        )
-
-        # ------------------------------------------------------
-        # VALUE BET
-        # ------------------------------------------------------
-
-        value_bet = (
-            self.is_value_bet(
-                ev
             )
         )
 
@@ -713,38 +760,37 @@ class OddsEngine:
 
             "best_odd": best,
 
-            "selected_outcome": (
-                best.get(
-                    "outcome"
-                )
+            "selected_outcome": best.get(
+                "outcome"
             ),
 
-            "selected_bookmaker": (
-                best.get(
-                    "bookmaker"
-                )
+            "selected_bookmaker": best.get(
+                "bookmaker"
             ),
 
-            "selected_market": (
-                best.get(
-                    "market"
-                )
+            "selected_market": best.get(
+                "market"
             ),
 
-            "odd": round(
-                odd,
-                3,
+            "odd": odd,
+
+            # Probabilidade implícita do mercado.
+            "implied_probability": (
+                implied_probability
             ),
 
+            # Probabilidade independente
+            # utilizada pelo OddReal.
             "probability": round(
                 probability,
                 2,
             ),
 
-            "expected_value": round(
-                ev,
-                2,
+            "probability_available": (
+                probability_available
             ),
+
+            "expected_value": ev,
 
             "oddreal_index": index,
 
@@ -752,72 +798,15 @@ class OddsEngine:
                 confidence_level
             ),
 
-            "average_odd": round(
-                average_odd,
-                2,
-            ),
+            "average_odd": average_odd,
 
-            "market_variation": round(
-                variation,
-                2,
-            ),
+            "market_variation": variation,
 
             "risk": risk,
 
-            "is_value_bet": (
-                value_bet
-            ),
+            "is_value_bet": value_bet,
 
         }
-
-    # ==========================================================
-    # ANÁLISE EM LOTE
-    # ==========================================================
-
-    def analyze_many(
-        self,
-        events: List[
-            Dict[str, Any]
-        ],
-    ) -> List[
-        Dict[str, Any]
-    ]:
-        """
-        Analisa vários eventos.
-        """
-
-        if not isinstance(
-            events,
-            list,
-        ):
-
-            return []
-
-        results: List[
-            Dict[str, Any]
-        ] = []
-
-        for event in events:
-
-            try:
-
-                result = (
-                    self.analyze_event(
-                        event
-                    )
-                )
-
-                if result:
-
-                    results.append(
-                        result
-                    )
-
-            except Exception:
-
-                continue
-
-        return results
 
 
 # ==========================================================
