@@ -10,41 +10,70 @@ API Client
     ↓
 DataManager
     ↓
-Normalização
-    ↓
 Analyzer
     ↓
-OddsEngine
+Value Bets / EV
     ↓
-Value Bets
-    ↓
-IA
+OddsEngine / IA
     ↓
 Dashboard
 
 Responsabilidade deste módulo:
 - Orquestrar o fluxo completo;
 - Não realizar cálculos quantitativos próprios;
-- Preservar a estrutura original dos dados;
-- Preparar informações para o Analyzer;
-- Consolidar o resultado final para o Dashboard.
+- Preservar os dados recebidos;
+- Entregar os dados do DataManager ao Analyzer;
+- Consolidar o resultado final;
+- Não duplicar a lógica de EV ou Value Bets.
+
+IMPORTANTE:
+
+A lógica quantitativa pertence ao Analyzer.
+
+O Pipeline NÃO deve calcular:
+- EV;
+- probabilidade;
+- odd média;
+- margem;
+- Value Bet;
+- Índice OddReal;
+- confiança;
+- risco.
+
+Essas responsabilidades pertencem ao Analyzer.
 """
 
 from __future__ import annotations
 
 from copy import deepcopy
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 from services.api_client import api_client
 from modules.data_manager import data_manager
-from modules.logger import info, error
-from core.analyzer import analyzer
+from modules.analyzer import analyzer
+from modules.logger import info, warning, error
 
 
 class Pipeline:
     """
     Orquestra o processamento completo do OddReal 2.0.
+
+    O Pipeline funciona como camada de integração entre:
+
+        API Client
+            ↓
+        DataManager
+            ↓
+        Analyzer
+            ↓
+        Dashboard / IA / OddsEngine
+
+    Não contém cálculos quantitativos próprios.
     """
+
+    # ==========================================================
+    # INICIALIZAÇÃO
+    # ==========================================================
 
     def __init__(self) -> None:
 
@@ -53,447 +82,60 @@ class Pipeline:
         )
 
     # ==========================================================
-    # UTILITÁRIOS
+    # VALIDAÇÃO
     # ==========================================================
 
     @staticmethod
-    def _safe_float(
+    def _ensure_list(
         value: Any,
-    ) -> Optional[float]:
-        """
-        Converte um valor para float com segurança.
-        """
-
-        try:
-
-            if value is None:
-                return None
-
-            result = float(value)
-
-            if result <= 0:
-                return None
-
-            return result
-
-        except (
-            TypeError,
-            ValueError,
-        ):
-
-            return None
-
-    # ==========================================================
-    # EXTRAÇÃO DA MELHOR ODD
-    # ==========================================================
-
-    def _extract_best_odd(
-        self,
-        event: Dict[str, Any],
-    ) -> Optional[Dict[str, Any]]:
-        """
-        Encontra a maior odd disponível no evento.
-
-        IMPORTANTE:
-        Esta função NÃO altera a estrutura original
-        dos bookmakers.
-        """
-
-        bookmakers = event.get(
-            "bookmakers",
-            [],
-        )
-
-        if not isinstance(
-            bookmakers,
-            list,
-        ):
-
-            return None
-
-        best: Optional[
-            Dict[str, Any]
-        ] = None
-
-        for bookmaker in bookmakers:
-
-            if not isinstance(
-                bookmaker,
-                dict,
-            ):
-
-                continue
-
-            bookmaker_name = (
-                bookmaker.get(
-                    "title"
-                )
-                or bookmaker.get(
-                    "key"
-                )
-                or "Desconhecida"
-            )
-
-            markets = bookmaker.get(
-                "markets",
-                [],
-            )
-
-            if not isinstance(
-                markets,
-                list,
-            ):
-
-                continue
-
-            for market in markets:
-
-                if not isinstance(
-                    market,
-                    dict,
-                ):
-
-                    continue
-
-                market_name = (
-                    market.get(
-                        "key"
-                    )
-                    or "unknown"
-                )
-
-                outcomes = market.get(
-                    "outcomes",
-                    [],
-                )
-
-                if not isinstance(
-                    outcomes,
-                    list,
-                ):
-
-                    continue
-
-                for outcome in outcomes:
-
-                    if not isinstance(
-                        outcome,
-                        dict,
-                    ):
-
-                        continue
-
-                    price = self._safe_float(
-                        outcome.get(
-                            "price"
-                        )
-                    )
-
-                    if price is None:
-                        continue
-
-                    candidate = {
-
-                        "odd": price,
-
-                        "bookmaker": (
-                            bookmaker_name
-                        ),
-
-                        "market": (
-                            market_name
-                        ),
-
-                        "outcome": (
-                            outcome.get(
-                                "name",
-                                "unknown",
-                            )
-                        ),
-
-                    }
-
-                    if (
-                        best is None
-                        or price > best["odd"]
-                    ):
-
-                        best = candidate
-
-        return best
-
-    # ==========================================================
-    # EXTRAÇÃO DAS ODDS
-    # ==========================================================
-
-    def _extract_market_odds(
-        self,
-        event: Dict[str, Any],
     ) -> List[Dict[str, Any]]:
         """
-        Cria uma visão plana das odds disponíveis.
+        Garante que o valor seja uma lista de dicionários.
 
-        A estrutura original de bookmakers permanece
-        preservada no evento.
+        Não altera os objetos recebidos.
         """
 
-        bookmakers = event.get(
-            "bookmakers",
-            [],
-        )
-
         if not isinstance(
-            bookmakers,
+            value,
             list,
         ):
-
             return []
 
-        odds: List[
+        result: List[
             Dict[str, Any]
         ] = []
 
-        for bookmaker in bookmakers:
+        for item in value:
 
-            if not isinstance(
-                bookmaker,
+            if isinstance(
+                item,
                 dict,
             ):
 
-                continue
-
-            bookmaker_name = (
-                bookmaker.get(
-                    "title"
-                )
-                or bookmaker.get(
-                    "key"
-                )
-                or "Desconhecida"
-            )
-
-            markets = bookmaker.get(
-                "markets",
-                [],
-            )
-
-            if not isinstance(
-                markets,
-                list,
-            ):
-
-                continue
-
-            for market in markets:
-
-                if not isinstance(
-                    market,
-                    dict,
-                ):
-
-                    continue
-
-                market_name = (
-                    market.get(
-                        "key"
-                    )
-                    or "unknown"
+                result.append(
+                    item
                 )
 
-                outcomes = market.get(
-                    "outcomes",
-                    [],
-                )
+        return result
 
-                if not isinstance(
-                    outcomes,
-                    list,
-                ):
-
-                    continue
-
-                for outcome in outcomes:
-
-                    if not isinstance(
-                        outcome,
-                        dict,
-                    ):
-
-                        continue
-
-                    price = self._safe_float(
-                        outcome.get(
-                            "price"
-                        )
-                    )
-
-                    if price is None:
-                        continue
-
-                    odds.append(
-                        {
-
-                            "odd": price,
-
-                            "bookmaker": (
-                                bookmaker_name
-                            ),
-
-                            "market": (
-                                market_name
-                            ),
-
-                            "outcome": (
-                                outcome.get(
-                                    "name",
-                                    "unknown",
-                                )
-                            ),
-
-                        }
-                    )
-
-        return odds
-
-    # ==========================================================
-    # PREPARAÇÃO DO EVENTO
-    # ==========================================================
-
-    def _prepare_event(
-        self,
-        event: Dict[str, Any],
-    ) -> Optional[
-        Dict[str, Any]
-    ]:
+    @staticmethod
+    def _ensure_dict(
+        value: Any,
+    ) -> Dict[str, Any]:
         """
-        Prepara um evento para o Analyzer.
-
-        NÃO substitui bookmakers.
-
-        São adicionados apenas campos auxiliares:
-        - best_odd
-        - market_odds
+        Garante que o valor seja um dicionário.
         """
 
         if not isinstance(
-            event,
+            value,
             dict,
         ):
+            return {}
 
-            return None
-
-        # ------------------------------------------------------
-        # MELHOR ODD
-        # ------------------------------------------------------
-
-        best_odd = (
-            self._extract_best_odd(
-                event
-            )
-        )
-
-        if best_odd is None:
-
-            return None
-
-        # ------------------------------------------------------
-        # ODDS PLANAS
-        # ------------------------------------------------------
-
-        market_odds = (
-            self._extract_market_odds(
-                event
-            )
-        )
-
-        if not market_odds:
-
-            return None
-
-        # ------------------------------------------------------
-        # PRESERVAR EVENTO ORIGINAL
-        # ------------------------------------------------------
-
-        prepared = deepcopy(
-            event
-        )
-
-        # ------------------------------------------------------
-        # CAMPOS AUXILIARES
-        # ------------------------------------------------------
-
-        prepared["best_odd"] = (
-            best_odd
-        )
-
-        prepared["market_odds"] = (
-            market_odds
-        )
-
-        # IMPORTANTE:
-        # NÃO fazemos:
-        #
-        # prepared["bookmakers"] = market_odds
-        #
-        # porque isso destruiria a estrutura
-        # original recebida da The Odds API.
-
-        return prepared
+        return value
 
     # ==========================================================
-    # PREPARAÇÃO DOS EVENTOS
-    # ==========================================================
-
-    def _prepare_events(
-        self,
-        events: List[
-            Dict[str, Any]
-        ],
-    ) -> List[
-        Dict[str, Any]
-    ]:
-        """
-        Prepara todos os eventos válidos.
-        """
-
-        if not isinstance(
-            events,
-            list,
-        ):
-
-            return []
-
-        prepared_events: List[
-            Dict[str, Any]
-        ] = []
-
-        for event in events:
-
-            try:
-
-                prepared = (
-                    self._prepare_event(
-                        event
-                    )
-                )
-
-                if prepared is not None:
-
-                    prepared_events.append(
-                        prepared
-                    )
-
-            except Exception as exc:
-
-                error(
-                    "Erro ao preparar evento: "
-                    f"{exc}"
-                )
-
-        return prepared_events
-
-    # ==========================================================
-    # EXECUÇÃO
+    # EXECUÇÃO PRINCIPAL
     # ==========================================================
 
     def execute(
@@ -501,23 +143,20 @@ class Pipeline:
         force_refresh: bool = False,
     ) -> Dict[str, Any]:
         """
-        Executa todo o pipeline.
+        Executa o pipeline completo.
 
         Fluxo:
 
-        API
-        ↓
-        DataManager
-        ↓
-        Preparação
-        ↓
-        Analyzer
-        ↓
-        Value Bets
-        ↓
-        Dados para IA
-        ↓
-        Resultado
+        1. API Client
+        2. DataManager
+        3. Analyzer
+        4. Value Bets
+        5. Resumos
+        6. Dados para IA
+        7. Resultado final
+
+        A lógica quantitativa é executada exclusivamente
+        pelo Analyzer.
         """
 
         # ======================================================
@@ -541,15 +180,18 @@ class Pipeline:
 
             raw_events = []
 
-        if not isinstance(
-            raw_events,
-            list,
-        ):
+        raw_events = self._ensure_list(
+            raw_events
+        )
 
-            raw_events = []
+        info(
+            "Pipeline recebeu "
+            f"{len(raw_events)} eventos "
+            "da API."
+        )
 
         # ======================================================
-        # 2. DATA MANAGER
+        # 2. DATAMANAGER
         # ======================================================
 
         try:
@@ -560,26 +202,11 @@ class Pipeline:
                 )
             )
 
-            if not isinstance(
-                managed_data,
-                dict,
-            ):
-
-                managed_data = {}
-
-            clean_events = (
-                managed_data.get(
-                    "analysis_events",
-                    [],
+            managed_data = (
+                self._ensure_dict(
+                    managed_data
                 )
             )
-
-            if not isinstance(
-                clean_events,
-                list,
-            ):
-
-                clean_events = []
 
         except Exception as exc:
 
@@ -588,50 +215,121 @@ class Pipeline:
                 f"{exc}"
             )
 
-            clean_events = []
-
             managed_data = {
 
-                "raw_events": (
-                    deepcopy(
-                        raw_events
-                    )
+                "raw_events": deepcopy(
+                    raw_events
                 ),
 
                 "clean_events": [],
 
                 "analysis_events": [],
 
-                "summary": {},
+                "analysis_records": [],
 
+                "summary": {},
             }
 
         # ======================================================
-        # 3. PREPARAÇÃO DOS EVENTOS
+        # DADOS DO DATAMANAGER
         # ======================================================
 
-        events = (
-            self._prepare_events(
-                clean_events
+        manager_raw_events = (
+            self._ensure_list(
+                managed_data.get(
+                    "raw_events",
+                    raw_events,
+                )
             )
         )
 
+        manager_clean_events = (
+            self._ensure_list(
+                managed_data.get(
+                    "clean_events",
+                    [],
+                )
+            )
+        )
+
+        manager_analysis_events = (
+            self._ensure_list(
+                managed_data.get(
+                    "analysis_events",
+                    [],
+                )
+            )
+        )
+
+        manager_analysis_records = (
+            self._ensure_list(
+                managed_data.get(
+                    "analysis_records",
+                    [],
+                )
+            )
+        )
+
+        data_summary = (
+            self._ensure_dict(
+                managed_data.get(
+                    "summary",
+                    {},
+                )
+            )
+        )
+
+        info(
+            "Pipeline recebeu do "
+            "DataManager: "
+            f"{len(manager_analysis_events)} "
+            "eventos preparados e "
+            f"{len(manager_analysis_records)} "
+            "registros de odds."
+        )
+
         # ======================================================
-        # 4. ANALYZER
+        # 3. ANALYZER
+        # ======================================================
+        #
+        # IMPORTANTE:
+        #
+        # O Analyzer possui:
+        #
+        #     process()
+        #
+        #     analyze_records()
+        #
+        #     analyze_events()
+        #
+        #     analyze_data_manager_output()
+        #
+        # Não possui:
+        #
+        #     analyze()
+        #
+        # Portanto o Pipeline utiliza a interface
+        # pública correta:
+        #
+        #     analyzer.process(managed_data)
+        #
+        # Isso mantém a lógica de análise dentro
+        # do Analyzer.
         # ======================================================
 
         try:
 
-            analyses = analyzer.analyze(
-                events
+            analyzer_result = (
+                analyzer.process(
+                    managed_data
+                )
             )
 
-            if not isinstance(
-                analyses,
-                list,
-            ):
-
-                analyses = []
+            analyzer_result = (
+                self._ensure_dict(
+                    analyzer_result
+                )
+            )
 
         except Exception as exc:
 
@@ -640,103 +338,131 @@ class Pipeline:
                 f"{exc}"
             )
 
-            analyses = []
+            analyzer_result = {
+
+                "analyses": [],
+
+                "value_bets": [],
+
+                "summary": {},
+
+                "processed_at": None,
+
+                "error": str(
+                    exc
+                ),
+            }
 
         # ======================================================
-        # 5. VALUE BETS
+        # 4. RESULTADOS DO ANALYZER
         # ======================================================
 
-        try:
-
-            value_bets = (
-                analyzer.value_bets(
-                    analyses
+        analyses = (
+            self._ensure_list(
+                analyzer_result.get(
+                    "analyses",
+                    [],
                 )
             )
+        )
 
-            if not isinstance(
-                value_bets,
-                list,
-            ):
-
-                value_bets = []
-
-        except Exception as exc:
-
-            error(
-                "Erro ao identificar "
-                f"Value Bets: {exc}"
+        value_bets = (
+            self._ensure_list(
+                analyzer_result.get(
+                    "value_bets",
+                    [],
+                )
             )
+        )
 
-            value_bets = []
+        analysis_summary = (
+            self._ensure_dict(
+                analyzer_result.get(
+                    "summary",
+                    {},
+                )
+            )
+        )
+
+        analyzer_processed_at = (
+            analyzer_result.get(
+                "processed_at"
+            )
+        )
+
+        analyzer_error = (
+            analyzer_result.get(
+                "error"
+            )
+        )
 
         # ======================================================
-        # 6. MELHOR OPORTUNIDADE
+        # 5. MELHOR OPORTUNIDADE
+        # ======================================================
+        #
+        # O Analyzer retorna Value Bets ordenadas
+        # por Índice OddReal através de:
+        #
+        #     best_opportunities()
+        #
+        # O primeiro elemento é, portanto,
+        # a melhor oportunidade entre as Value Bets
+        # retornadas pelo Analyzer.
+        #
+        # Não recalculamos nada aqui.
+        # ======================================================
+
+        best_value_bet = None
+
+        if value_bets:
+
+            best_value_bet = deepcopy(
+                value_bets[0]
+            )
+
+        # ======================================================
+        # 6. MELHOR ANÁLISE GERAL
+        # ======================================================
+        #
+        # Caso não exista Value Bet, podemos ainda
+        # disponibilizar a melhor análise geral
+        # pelo Índice OddReal.
+        #
+        # Esta ordenação é apenas organização do resultado.
+        # O cálculo do índice continua sendo responsabilidade
+        # do Analyzer.
         # ======================================================
 
         best_match = None
-        best_value_bet = None
 
-        try:
+        if analyses:
 
-            best_match = (
-                analyzer.best_opportunity(
-                    analyses
+            ranked_analyses = sorted(
+                analyses,
+                key=lambda item: float(
+                    item.get(
+                        "oddreal_index",
+                        0,
+                    )
+                    or 0
+                ),
+                reverse=True,
+            )
+
+            if ranked_analyses:
+
+                best_match = deepcopy(
+                    ranked_analyses[0]
                 )
-            )
-
-        except Exception as exc:
-
-            error(
-                "Erro ao identificar "
-                f"melhor oportunidade: {exc}"
-            )
-
-        try:
-
-            best_value_bet = (
-                analyzer.best_value_bet(
-                    analyses
-                )
-            )
-
-        except Exception as exc:
-
-            error(
-                "Erro ao identificar "
-                f"melhor Value Bet: {exc}"
-            )
 
         # ======================================================
-        # 7. RESUMO DA ANÁLISE
+        # 7. DADOS PARA IA
         # ======================================================
-
-        try:
-
-            analysis_summary = (
-                analyzer.summary(
-                    analyses
-                )
-            )
-
-            if not isinstance(
-                analysis_summary,
-                dict,
-            ):
-
-                analysis_summary = {}
-
-        except Exception as exc:
-
-            error(
-                "Erro ao gerar resumo "
-                f"da análise: {exc}"
-            )
-
-            analysis_summary = {}
-
-        # ======================================================
-        # 8. DADOS PARA IA
+        #
+        # O DataManager já possui prepare_for_ai().
+        #
+        # Portanto utilizamos a estrutura produzida
+        # pelo Analyzer.
         # ======================================================
 
         try:
@@ -747,12 +473,11 @@ class Pipeline:
                 )
             )
 
-            if not isinstance(
-                ai_data,
-                list,
-            ):
-
-                ai_data = []
+            ai_data = (
+                self._ensure_list(
+                    ai_data
+                )
+            )
 
         except Exception as exc:
 
@@ -764,22 +489,62 @@ class Pipeline:
             ai_data = []
 
         # ======================================================
-        # 9. RESUMO DOS DADOS
+        # 8. CONTADORES
         # ======================================================
 
-        data_summary = (
-            managed_data.get(
-                "summary",
-                {},
-            )
+        total_events = len(
+            manager_analysis_events
         )
 
-        if not isinstance(
-            data_summary,
-            dict,
+        total_records = len(
+            manager_analysis_records
+        )
+
+        total_analyses = len(
+            analyses
+        )
+
+        total_value_bets = len(
+            value_bets
+        )
+
+        # ======================================================
+        # 9. LOG DIAGNÓSTICO
+        # ======================================================
+
+        info(
+            "Pipeline Analyzer: "
+            f"{total_records} registros → "
+            f"{total_analyses} análises → "
+            f"{total_value_bets} Value Bets."
+        )
+
+        if total_records > 0 and total_analyses == 0:
+
+            warning(
+                "DataManager entregou "
+                f"{total_records} registros de odds, "
+                "mas o Analyzer não produziu análises."
+            )
+
+        if (
+            total_analyses > 0
+            and total_value_bets == 0
         ):
 
-            data_summary = {}
+            info(
+                "Analyzer produziu "
+                f"{total_analyses} análises, "
+                "mas nenhuma foi classificada "
+                "como Value Bet."
+            )
+
+        if analyzer_error:
+
+            error(
+                "Analyzer retornou erro: "
+                f"{analyzer_error}"
+            )
 
         # ======================================================
         # 10. RESULTADO FINAL
@@ -787,34 +552,47 @@ class Pipeline:
 
         result: Dict[
             str,
-            Any
+            Any,
         ] = {
 
             # --------------------------------------------------
-            # EVENTOS
+            # API
             # --------------------------------------------------
-
-            "events": deepcopy(
-                events
-            ),
 
             "raw_events": deepcopy(
                 raw_events
             ),
 
+            # --------------------------------------------------
+            # DATAMANAGER
+            # --------------------------------------------------
+
             "clean_events": deepcopy(
-                managed_data.get(
-                    "clean_events",
-                    [],
-                )
+                manager_clean_events
+            ),
+
+            "analysis_events": deepcopy(
+                manager_analysis_events
+            ),
+
+            "analysis_records": deepcopy(
+                manager_analysis_records
+            ),
+
+            "data_summary": deepcopy(
+                data_summary
             ),
 
             # --------------------------------------------------
-            # ANÁLISES
+            # ANALYZER
             # --------------------------------------------------
 
             "analyses": deepcopy(
                 analyses
+            ),
+
+            "analysis_summary": deepcopy(
+                analysis_summary
             ),
 
             # --------------------------------------------------
@@ -829,11 +607,11 @@ class Pipeline:
             # MELHORES OPORTUNIDADES
             # --------------------------------------------------
 
-            "best_match": (
+            "best_match": deepcopy(
                 best_match
             ),
 
-            "best_value_bet": (
+            "best_value_bet": deepcopy(
                 best_value_bet
             ),
 
@@ -846,33 +624,34 @@ class Pipeline:
             ),
 
             # --------------------------------------------------
-            # RESUMOS
-            # --------------------------------------------------
-
-            "data_summary": (
-                data_summary
-            ),
-
-            "analysis_summary": (
-                analysis_summary
-            ),
-
-            # --------------------------------------------------
             # CONTADORES
             # --------------------------------------------------
 
-            "total_events": len(
-                events
+            "total_events": (
+                total_events
             ),
 
-            "total_analyses": len(
-                analyses
+            "total_records": (
+                total_records
             ),
 
-            "total_value_bets": len(
-                value_bets
+            "total_analyses": (
+                total_analyses
             ),
 
+            "total_value_bets": (
+                total_value_bets
+            ),
+
+            # --------------------------------------------------
+            # CONTROLE
+            # --------------------------------------------------
+
+            "processed_at": (
+                analyzer_processed_at
+            ),
+
+            "error": analyzer_error,
         }
 
         # ======================================================
@@ -881,9 +660,10 @@ class Pipeline:
 
         info(
             "Pipeline concluído: "
-            f"{len(events)} eventos, "
-            f"{len(analyses)} análises e "
-            f"{len(value_bets)} Value Bets."
+            f"{total_events} eventos, "
+            f"{total_records} registros, "
+            f"{total_analyses} análises e "
+            f"{total_value_bets} Value Bets."
         )
 
         return result
@@ -894,3 +674,13 @@ class Pipeline:
 # ==========================================================
 
 pipeline = Pipeline()
+
+
+# ==========================================================
+# EXPORTAÇÃO
+# ==========================================================
+
+__all__ = [
+    "Pipeline",
+    "pipeline",
+        ]
