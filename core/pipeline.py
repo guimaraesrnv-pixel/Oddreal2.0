@@ -28,7 +28,7 @@ Responsabilidade deste módulo:
 - Orquestrar o fluxo completo;
 - Não realizar cálculos quantitativos próprios;
 - Preservar os dados recebidos;
-- Entregar os eventos ao Analyzer;
+- Entregar os dados ao Analyzer;
 - Consolidar EV e Value Bets;
 - Preparar dados para IA;
 - Entregar um resultado único para a interface.
@@ -57,26 +57,25 @@ class Pipeline:
     """
     Orquestrador principal do OddReal 2.0.
 
-    Responsabilidades:
+    Fluxo:
 
-    API
-        ↓
-    DataManager
-        ↓
-    Analyzer
-        ↓
-    Value Bets
-        ↓
-    IA
-        ↓
-    Dashboard
+        API
+         ↓
+        DataManager
+         ↓
+        Analyzer
+         ↓
+        Value Bets
+         ↓
+        IA
+         ↓
+        Dashboard
 
     O Pipeline não recalcula EV, probabilidade,
     margem, índice ou qualquer métrica quantitativa.
     """
 
     def __init__(self) -> None:
-
         info(
             "Pipeline OddReal 2.0 iniciado."
         )
@@ -93,10 +92,7 @@ class Pipeline:
         Garante que o valor retornado seja uma lista.
         """
 
-        if isinstance(
-            value,
-            list,
-        ):
+        if isinstance(value, list):
             return value
 
         return []
@@ -109,57 +105,50 @@ class Pipeline:
         Garante que o valor retornado seja um dicionário.
         """
 
-        if isinstance(
-            value,
-            dict,
-        ):
+        if isinstance(value, dict):
             return value
 
         return {}
 
     # ==========================================================
-    # PREPARAÇÃO
+    # PREPARAÇÃO DOS EVENTOS
     # ==========================================================
 
     def _prepare_events(
         self,
-        events: List[
-            Dict[str, Any]
-        ],
-    ) -> List[
-        Dict[str, Any]
-    ]:
+        events: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
         """
         Preserva os eventos recebidos.
 
-        O Analyzer é responsável por interpretar
-        bookmakers, mercados, outcomes, odds, EV
-        e Value Bets.
+        O Analyzer é responsável por interpretar:
 
-        Portanto, o Pipeline não substitui nem
-        reconstrói a estrutura de bookmakers.
+        - bookmakers;
+        - mercados;
+        - outcomes;
+        - odds;
+        - probabilidades;
+        - EV;
+        - Value Bets.
+
+        Portanto, o Pipeline não reconstrói
+        nem modifica a estrutura quantitativa.
         """
 
-        if not isinstance(
-            events,
-            list,
-        ):
+        if not isinstance(events, list):
             return []
 
-        prepared_events = []
+        prepared_events: List[
+            Dict[str, Any]
+        ] = []
 
         for event in events:
 
-            if not isinstance(
-                event,
-                dict,
-            ):
+            if not isinstance(event, dict):
                 continue
 
             prepared_events.append(
-                deepcopy(
-                    event
-                )
+                deepcopy(event)
             )
 
         return prepared_events
@@ -177,13 +166,14 @@ class Pipeline:
 
         Fluxo:
 
-        1. API
+        1. Coleta da API
         2. DataManager
         3. Analyzer
-        4. EV / Value Bets
+        4. Value Bets
         5. Melhores oportunidades
-        6. Dados para IA
-        7. Consolidação
+        6. Melhor oportunidade
+        7. Dados para IA
+        8. Consolidação
         """
 
         # ======================================================
@@ -192,10 +182,8 @@ class Pipeline:
 
         try:
 
-            raw_events = (
-                api_client.get_events(
-                    force_refresh=force_refresh
-                )
+            raw_events = api_client.get_events(
+                force_refresh=force_refresh
             )
 
             raw_events = self._safe_list(
@@ -217,16 +205,12 @@ class Pipeline:
 
         try:
 
-            managed_data = (
-                data_manager.process(
-                    raw_events
-                )
+            managed_data = data_manager.process(
+                raw_events
             )
 
-            managed_data = (
-                self._safe_dict(
-                    managed_data
-                )
+            managed_data = self._safe_dict(
+                managed_data
             )
 
         except Exception as exc:
@@ -237,49 +221,37 @@ class Pipeline:
             )
 
             managed_data = {
-
                 "raw_events": deepcopy(
                     raw_events
                 ),
-
                 "clean_events": [],
-
                 "analysis_events": [],
-
                 "analysis_records": [],
-
                 "summary": {},
-
             }
 
         # ======================================================
-        # 3. EVENTOS PARA ANÁLISE
+        # 3. DADOS DO DATAMANAGER
         # ======================================================
 
-        analysis_events = (
-            self._safe_list(
-                managed_data.get(
-                    "analysis_events",
-                    [],
-                )
+        analysis_events = self._safe_list(
+            managed_data.get(
+                "analysis_events",
+                [],
             )
         )
 
-        analysis_records = (
-            self._safe_list(
-                managed_data.get(
-                    "analysis_records",
-                    [],
-                )
+        analysis_records = self._safe_list(
+            managed_data.get(
+                "analysis_records",
+                [],
             )
         )
 
-        clean_events = (
-            self._safe_list(
-                managed_data.get(
-                    "clean_events",
-                    [],
-                )
+        clean_events = self._safe_list(
+            managed_data.get(
+                "clean_events",
+                [],
             )
         )
 
@@ -289,30 +261,12 @@ class Pipeline:
 
         try:
 
-            /*
-            O Analyzer possui suporte direto
-            para a saída do DataManager.
-
-            Portanto, entregamos o dicionário
-            completo quando possível.
-
-            Isso permite que o Analyzer escolha:
-
-                analysis_records
-                    ou
-                analysis_events
-            */
-
-            analyzer_result = (
-                analyzer.process(
-                    managed_data
-                )
+            analyzer_result = analyzer.process(
+                managed_data
             )
 
-            analyzer_result = (
-                self._safe_dict(
-                    analyzer_result
-                )
+            analyzer_result = self._safe_dict(
+                analyzer_result
             )
 
         except Exception as exc:
@@ -323,49 +277,35 @@ class Pipeline:
             )
 
             analyzer_result = {
-
                 "analyses": [],
-
                 "value_bets": [],
-
                 "summary": {},
-
                 "processed_at": None,
-
-                "error": str(
-                    exc
-                ),
-
+                "error": str(exc),
             }
 
         # ======================================================
         # 5. RESULTADOS DO ANALYZER
         # ======================================================
 
-        analyses = (
-            self._safe_list(
-                analyzer_result.get(
-                    "analyses",
-                    [],
-                )
+        analyses = self._safe_list(
+            analyzer_result.get(
+                "analyses",
+                [],
             )
         )
 
-        value_bets = (
-            self._safe_list(
-                analyzer_result.get(
-                    "value_bets",
-                    [],
-                )
+        value_bets = self._safe_list(
+            analyzer_result.get(
+                "value_bets",
+                [],
             )
         )
 
-        analyzer_summary = (
-            self._safe_dict(
-                analyzer_result.get(
-                    "summary",
-                    {},
-                )
+        analyzer_summary = self._safe_dict(
+            analyzer_result.get(
+                "summary",
+                {},
             )
         )
 
@@ -373,27 +313,10 @@ class Pipeline:
         # 6. VALUE BETS
         # ======================================================
 
-        /*
-        O Analyzer já determina:
-
-            EV
-            is_value_bet
-            oddreal_index
-            confidence
-            risk
-            opportunity
-
-        O Pipeline NÃO recria essas regras.
-
-        Apenas preserva o resultado.
-        */
-
         try:
 
-            value_bets = (
-                analyzer.filter_value_bets(
-                    analyses
-                )
+            value_bets = analyzer.filter_value_bets(
+                analyses
             )
 
             value_bets = self._safe_list(
@@ -494,10 +417,8 @@ class Pipeline:
 
         try:
 
-            analysis_summary = (
-                analyzer.summary(
-                    analyses
-                )
+            analysis_summary = analyzer.summary(
+                analyses
             )
 
             analysis_summary = (
@@ -546,12 +467,10 @@ class Pipeline:
         # 12. RESUMO DO DATAMANAGER
         # ======================================================
 
-        data_summary = (
-            self._safe_dict(
-                managed_data.get(
-                    "summary",
-                    {},
-                )
+        data_summary = self._safe_dict(
+            managed_data.get(
+                "summary",
+                {},
             )
         )
 
@@ -559,10 +478,7 @@ class Pipeline:
         # 13. RESULTADO FINAL
         # ======================================================
 
-        result: Dict[
-            str,
-            Any
-        ] = {
+        result: Dict[str, Any] = {
 
             # --------------------------------------------------
             # DADOS ORIGINAIS
@@ -685,16 +601,13 @@ class Pipeline:
             "total_best_opportunities": len(
                 best_opportunities
             ),
-
         }
 
         # ======================================================
         # ERRO DO ANALYZER
         # ======================================================
 
-        if analyzer_result.get(
-            "error"
-        ):
+        if analyzer_result.get("error"):
 
             result[
                 "analyzer_error"
