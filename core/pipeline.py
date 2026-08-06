@@ -10,11 +10,17 @@ API Client
     ↓
 DataManager
     ↓
+Normalização / preparação
+    ↓
 Analyzer
     ↓
-Value Bets / EV
+EV
     ↓
-OddsEngine / IA
+Value Bets
+    ↓
+Melhores oportunidades
+    ↓
+IA
     ↓
 Dashboard
 
@@ -22,58 +28,52 @@ Responsabilidade deste módulo:
 - Orquestrar o fluxo completo;
 - Não realizar cálculos quantitativos próprios;
 - Preservar os dados recebidos;
-- Entregar os dados do DataManager ao Analyzer;
-- Consolidar o resultado final;
-- Não duplicar a lógica de EV ou Value Bets.
+- Entregar os eventos ao Analyzer;
+- Consolidar EV e Value Bets;
+- Preparar dados para IA;
+- Entregar um resultado único para a interface.
 
 IMPORTANTE:
 
-A lógica quantitativa pertence ao Analyzer.
+O Pipeline NÃO implementa a lógica matemática das odds.
 
-O Pipeline NÃO deve calcular:
-- EV;
-- probabilidade;
-- odd média;
-- margem;
-- Value Bet;
-- Índice OddReal;
-- confiança;
-- risco.
+A responsabilidade quantitativa pertence ao Analyzer.
 
-Essas responsabilidades pertencem ao Analyzer.
+O Pipeline apenas coordena os módulos.
 """
 
 from __future__ import annotations
 
 from copy import deepcopy
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from services.api_client import api_client
 from modules.data_manager import data_manager
-from modules.analyzer import analyzer
-from modules.logger import info, warning, error
+from modules.logger import info, error
+from core.analyzer import analyzer
 
 
 class Pipeline:
     """
-    Orquestra o processamento completo do OddReal 2.0.
+    Orquestrador principal do OddReal 2.0.
 
-    O Pipeline funciona como camada de integração entre:
+    Responsabilidades:
 
-        API Client
-            ↓
-        DataManager
-            ↓
-        Analyzer
-            ↓
-        Dashboard / IA / OddsEngine
+    API
+        ↓
+    DataManager
+        ↓
+    Analyzer
+        ↓
+    Value Bets
+        ↓
+    IA
+        ↓
+    Dashboard
 
-    Não contém cálculos quantitativos próprios.
+    O Pipeline não recalcula EV, probabilidade,
+    margem, índice ou qualquer métrica quantitativa.
     """
-
-    # ==========================================================
-    # INICIALIZAÇÃO
-    # ==========================================================
 
     def __init__(self) -> None:
 
@@ -82,57 +82,87 @@ class Pipeline:
         )
 
     # ==========================================================
-    # VALIDAÇÃO
+    # UTILITÁRIOS
     # ==========================================================
 
     @staticmethod
-    def _ensure_list(
+    def _safe_list(
         value: Any,
-    ) -> List[Dict[str, Any]]:
+    ) -> List[Any]:
         """
-        Garante que o valor seja uma lista de dicionários.
+        Garante que o valor retornado seja uma lista.
+        """
 
-        Não altera os objetos recebidos.
+        if isinstance(
+            value,
+            list,
+        ):
+            return value
+
+        return []
+
+    @staticmethod
+    def _safe_dict(
+        value: Any,
+    ) -> Dict[str, Any]:
+        """
+        Garante que o valor retornado seja um dicionário.
+        """
+
+        if isinstance(
+            value,
+            dict,
+        ):
+            return value
+
+        return {}
+
+    # ==========================================================
+    # PREPARAÇÃO
+    # ==========================================================
+
+    def _prepare_events(
+        self,
+        events: List[
+            Dict[str, Any]
+        ],
+    ) -> List[
+        Dict[str, Any]
+    ]:
+        """
+        Preserva os eventos recebidos.
+
+        O Analyzer é responsável por interpretar
+        bookmakers, mercados, outcomes, odds, EV
+        e Value Bets.
+
+        Portanto, o Pipeline não substitui nem
+        reconstrói a estrutura de bookmakers.
         """
 
         if not isinstance(
-            value,
+            events,
             list,
         ):
             return []
 
-        result: List[
-            Dict[str, Any]
-        ] = []
+        prepared_events = []
 
-        for item in value:
+        for event in events:
 
-            if isinstance(
-                item,
+            if not isinstance(
+                event,
                 dict,
             ):
+                continue
 
-                result.append(
-                    item
+            prepared_events.append(
+                deepcopy(
+                    event
                 )
+            )
 
-        return result
-
-    @staticmethod
-    def _ensure_dict(
-        value: Any,
-    ) -> Dict[str, Any]:
-        """
-        Garante que o valor seja um dicionário.
-        """
-
-        if not isinstance(
-            value,
-            dict,
-        ):
-            return {}
-
-        return value
+        return prepared_events
 
     # ==========================================================
     # EXECUÇÃO PRINCIPAL
@@ -143,20 +173,17 @@ class Pipeline:
         force_refresh: bool = False,
     ) -> Dict[str, Any]:
         """
-        Executa o pipeline completo.
+        Executa o pipeline completo do OddReal.
 
         Fluxo:
 
-        1. API Client
+        1. API
         2. DataManager
         3. Analyzer
-        4. Value Bets
-        5. Resumos
+        4. EV / Value Bets
+        5. Melhores oportunidades
         6. Dados para IA
-        7. Resultado final
-
-        A lógica quantitativa é executada exclusivamente
-        pelo Analyzer.
+        7. Consolidação
         """
 
         # ======================================================
@@ -171,6 +198,10 @@ class Pipeline:
                 )
             )
 
+            raw_events = self._safe_list(
+                raw_events
+            )
+
         except Exception as exc:
 
             error(
@@ -180,18 +211,8 @@ class Pipeline:
 
             raw_events = []
 
-        raw_events = self._ensure_list(
-            raw_events
-        )
-
-        info(
-            "Pipeline recebeu "
-            f"{len(raw_events)} eventos "
-            "da API."
-        )
-
         # ======================================================
-        # 2. DATAMANAGER
+        # 2. DATA MANAGER
         # ======================================================
 
         try:
@@ -203,7 +224,7 @@ class Pipeline:
             )
 
             managed_data = (
-                self._ensure_dict(
+                self._safe_dict(
                     managed_data
                 )
             )
@@ -228,32 +249,15 @@ class Pipeline:
                 "analysis_records": [],
 
                 "summary": {},
+
             }
 
         # ======================================================
-        # DADOS DO DATAMANAGER
+        # 3. EVENTOS PARA ANÁLISE
         # ======================================================
 
-        manager_raw_events = (
-            self._ensure_list(
-                managed_data.get(
-                    "raw_events",
-                    raw_events,
-                )
-            )
-        )
-
-        manager_clean_events = (
-            self._ensure_list(
-                managed_data.get(
-                    "clean_events",
-                    [],
-                )
-            )
-        )
-
-        manager_analysis_events = (
-            self._ensure_list(
+        analysis_events = (
+            self._safe_list(
                 managed_data.get(
                     "analysis_events",
                     [],
@@ -261,8 +265,8 @@ class Pipeline:
             )
         )
 
-        manager_analysis_records = (
-            self._ensure_list(
+        analysis_records = (
+            self._safe_list(
                 managed_data.get(
                     "analysis_records",
                     [],
@@ -270,54 +274,34 @@ class Pipeline:
             )
         )
 
-        data_summary = (
-            self._ensure_dict(
+        clean_events = (
+            self._safe_list(
                 managed_data.get(
-                    "summary",
-                    {},
+                    "clean_events",
+                    [],
                 )
             )
         )
 
-        info(
-            "Pipeline recebeu do "
-            "DataManager: "
-            f"{len(manager_analysis_events)} "
-            "eventos preparados e "
-            f"{len(manager_analysis_records)} "
-            "registros de odds."
-        )
-
         # ======================================================
-        # 3. ANALYZER
-        # ======================================================
-        #
-        # IMPORTANTE:
-        #
-        # O Analyzer possui:
-        #
-        #     process()
-        #
-        #     analyze_records()
-        #
-        #     analyze_events()
-        #
-        #     analyze_data_manager_output()
-        #
-        # Não possui:
-        #
-        #     analyze()
-        #
-        # Portanto o Pipeline utiliza a interface
-        # pública correta:
-        #
-        #     analyzer.process(managed_data)
-        #
-        # Isso mantém a lógica de análise dentro
-        # do Analyzer.
+        # 4. ANALYZER
         # ======================================================
 
         try:
+
+            /*
+            O Analyzer possui suporte direto
+            para a saída do DataManager.
+
+            Portanto, entregamos o dicionário
+            completo quando possível.
+
+            Isso permite que o Analyzer escolha:
+
+                analysis_records
+                    ou
+                analysis_events
+            */
 
             analyzer_result = (
                 analyzer.process(
@@ -326,7 +310,7 @@ class Pipeline:
             )
 
             analyzer_result = (
-                self._ensure_dict(
+                self._safe_dict(
                     analyzer_result
                 )
             )
@@ -351,14 +335,15 @@ class Pipeline:
                 "error": str(
                     exc
                 ),
+
             }
 
         # ======================================================
-        # 4. RESULTADOS DO ANALYZER
+        # 5. RESULTADOS DO ANALYZER
         # ======================================================
 
         analyses = (
-            self._ensure_list(
+            self._safe_list(
                 analyzer_result.get(
                     "analyses",
                     [],
@@ -367,7 +352,7 @@ class Pipeline:
         )
 
         value_bets = (
-            self._ensure_list(
+            self._safe_list(
                 analyzer_result.get(
                     "value_bets",
                     [],
@@ -375,8 +360,8 @@ class Pipeline:
             )
         )
 
-        analysis_summary = (
-            self._ensure_dict(
+        analyzer_summary = (
+            self._safe_dict(
                 analyzer_result.get(
                     "summary",
                     {},
@@ -384,35 +369,81 @@ class Pipeline:
             )
         )
 
-        analyzer_processed_at = (
-            analyzer_result.get(
-                "processed_at"
+        # ======================================================
+        # 6. VALUE BETS
+        # ======================================================
+
+        /*
+        O Analyzer já determina:
+
+            EV
+            is_value_bet
+            oddreal_index
+            confidence
+            risk
+            opportunity
+
+        O Pipeline NÃO recria essas regras.
+
+        Apenas preserva o resultado.
+        */
+
+        try:
+
+            value_bets = (
+                analyzer.filter_value_bets(
+                    analyses
+                )
             )
-        )
 
-        analyzer_error = (
-            analyzer_result.get(
-                "error"
+            value_bets = self._safe_list(
+                value_bets
             )
-        )
+
+        except Exception as exc:
+
+            error(
+                "Erro ao filtrar Value Bets: "
+                f"{exc}"
+            )
+
+            value_bets = []
 
         # ======================================================
-        # 5. MELHOR OPORTUNIDADE
-        # ======================================================
-        #
-        # O Analyzer retorna Value Bets ordenadas
-        # por Índice OddReal através de:
-        #
-        #     best_opportunities()
-        #
-        # O primeiro elemento é, portanto,
-        # a melhor oportunidade entre as Value Bets
-        # retornadas pelo Analyzer.
-        #
-        # Não recalculamos nada aqui.
+        # 7. MELHORES OPORTUNIDADES
         # ======================================================
 
-        best_value_bet = None
+        try:
+
+            best_opportunities = (
+                analyzer.best_opportunities(
+                    analyses,
+                    limit=20,
+                )
+            )
+
+            best_opportunities = (
+                self._safe_list(
+                    best_opportunities
+                )
+            )
+
+        except Exception as exc:
+
+            error(
+                "Erro ao obter melhores "
+                f"oportunidades: {exc}"
+            )
+
+            best_opportunities = []
+
+        # ======================================================
+        # 8. MELHOR VALUE BET
+        # ======================================================
+
+        best_value_bet: Optional[
+            Dict[str, Any]
+        ] = None
 
         if value_bets:
 
@@ -421,48 +452,73 @@ class Pipeline:
             )
 
         # ======================================================
-        # 6. MELHOR ANÁLISE GERAL
-        # ======================================================
-        #
-        # Caso não exista Value Bet, podemos ainda
-        # disponibilizar a melhor análise geral
-        # pelo Índice OddReal.
-        #
-        # Esta ordenação é apenas organização do resultado.
-        # O cálculo do índice continua sendo responsabilidade
-        # do Analyzer.
+        # 9. MELHOR OPORTUNIDADE GERAL
         # ======================================================
 
-        best_match = None
+        best_match: Optional[
+            Dict[str, Any]
+        ] = None
 
         if analyses:
 
-            ranked_analyses = sorted(
-                analyses,
-                key=lambda item: float(
-                    item.get(
-                        "oddreal_index",
-                        0,
+            try:
+
+                ordered = sorted(
+                    analyses,
+                    key=lambda item: float(
+                        item.get(
+                            "oddreal_index",
+                            0,
+                        )
+                        or 0
+                    ),
+                    reverse=True,
+                )
+
+                if ordered:
+
+                    best_match = deepcopy(
+                        ordered[0]
                     )
-                    or 0
-                ),
-                reverse=True,
-            )
 
-            if ranked_analyses:
+            except Exception as exc:
 
-                best_match = deepcopy(
-                    ranked_analyses[0]
+                error(
+                    "Erro ao identificar "
+                    f"melhor oportunidade: {exc}"
                 )
 
         # ======================================================
-        # 7. DADOS PARA IA
+        # 10. RESUMO DA ANÁLISE
         # ======================================================
-        #
-        # O DataManager já possui prepare_for_ai().
-        #
-        # Portanto utilizamos a estrutura produzida
-        # pelo Analyzer.
+
+        try:
+
+            analysis_summary = (
+                analyzer.summary(
+                    analyses
+                )
+            )
+
+            analysis_summary = (
+                self._safe_dict(
+                    analysis_summary
+                )
+            )
+
+        except Exception as exc:
+
+            error(
+                "Erro ao gerar resumo "
+                f"da análise: {exc}"
+            )
+
+            analysis_summary = (
+                analyzer_summary
+            )
+
+        # ======================================================
+        # 11. DADOS PARA IA
         # ======================================================
 
         try:
@@ -473,10 +529,8 @@ class Pipeline:
                 )
             )
 
-            ai_data = (
-                self._ensure_list(
-                    ai_data
-                )
+            ai_data = self._safe_list(
+                ai_data
             )
 
         except Exception as exc:
@@ -489,74 +543,29 @@ class Pipeline:
             ai_data = []
 
         # ======================================================
-        # 8. CONTADORES
+        # 12. RESUMO DO DATAMANAGER
         # ======================================================
 
-        total_events = len(
-            manager_analysis_events
-        )
-
-        total_records = len(
-            manager_analysis_records
-        )
-
-        total_analyses = len(
-            analyses
-        )
-
-        total_value_bets = len(
-            value_bets
-        )
-
-        # ======================================================
-        # 9. LOG DIAGNÓSTICO
-        # ======================================================
-
-        info(
-            "Pipeline Analyzer: "
-            f"{total_records} registros → "
-            f"{total_analyses} análises → "
-            f"{total_value_bets} Value Bets."
-        )
-
-        if total_records > 0 and total_analyses == 0:
-
-            warning(
-                "DataManager entregou "
-                f"{total_records} registros de odds, "
-                "mas o Analyzer não produziu análises."
+        data_summary = (
+            self._safe_dict(
+                managed_data.get(
+                    "summary",
+                    {},
+                )
             )
-
-        if (
-            total_analyses > 0
-            and total_value_bets == 0
-        ):
-
-            info(
-                "Analyzer produziu "
-                f"{total_analyses} análises, "
-                "mas nenhuma foi classificada "
-                "como Value Bet."
-            )
-
-        if analyzer_error:
-
-            error(
-                "Analyzer retornou erro: "
-                f"{analyzer_error}"
-            )
+        )
 
         # ======================================================
-        # 10. RESULTADO FINAL
+        # 13. RESULTADO FINAL
         # ======================================================
 
         result: Dict[
             str,
-            Any,
+            Any
         ] = {
 
             # --------------------------------------------------
-            # API
+            # DADOS ORIGINAIS
             # --------------------------------------------------
 
             "raw_events": deepcopy(
@@ -564,35 +573,37 @@ class Pipeline:
             ),
 
             # --------------------------------------------------
-            # DATAMANAGER
+            # DADOS PROCESSADOS
             # --------------------------------------------------
 
             "clean_events": deepcopy(
-                manager_clean_events
+                clean_events
             ),
 
             "analysis_events": deepcopy(
-                manager_analysis_events
+                analysis_events
             ),
 
             "analysis_records": deepcopy(
-                manager_analysis_records
-            ),
-
-            "data_summary": deepcopy(
-                data_summary
+                analysis_records
             ),
 
             # --------------------------------------------------
-            # ANALYZER
+            # EVENTOS PREPARADOS
+            # --------------------------------------------------
+
+            "events": deepcopy(
+                self._prepare_events(
+                    analysis_events
+                )
+            ),
+
+            # --------------------------------------------------
+            # ANÁLISES
             # --------------------------------------------------
 
             "analyses": deepcopy(
                 analyses
-            ),
-
-            "analysis_summary": deepcopy(
-                analysis_summary
             ),
 
             # --------------------------------------------------
@@ -606,6 +617,10 @@ class Pipeline:
             # --------------------------------------------------
             # MELHORES OPORTUNIDADES
             # --------------------------------------------------
+
+            "best_opportunities": deepcopy(
+                best_opportunities
+            ),
 
             "best_match": deepcopy(
                 best_match
@@ -624,35 +639,68 @@ class Pipeline:
             ),
 
             # --------------------------------------------------
+            # RESUMOS
+            # --------------------------------------------------
+
+            "data_summary": deepcopy(
+                data_summary
+            ),
+
+            "analysis_summary": deepcopy(
+                analysis_summary
+            ),
+
+            # --------------------------------------------------
             # CONTADORES
             # --------------------------------------------------
 
-            "total_events": (
-                total_events
+            "total_raw_events": len(
+                raw_events
             ),
 
-            "total_records": (
-                total_records
+            "total_clean_events": len(
+                clean_events
             ),
 
-            "total_analyses": (
-                total_analyses
+            "total_analysis_events": len(
+                analysis_events
             ),
 
-            "total_value_bets": (
-                total_value_bets
+            "total_analysis_records": len(
+                analysis_records
             ),
 
-            # --------------------------------------------------
-            # CONTROLE
-            # --------------------------------------------------
-
-            "processed_at": (
-                analyzer_processed_at
+            "total_events": len(
+                analyses
             ),
 
-            "error": analyzer_error,
+            "total_analyses": len(
+                analyses
+            ),
+
+            "total_value_bets": len(
+                value_bets
+            ),
+
+            "total_best_opportunities": len(
+                best_opportunities
+            ),
+
         }
+
+        # ======================================================
+        # ERRO DO ANALYZER
+        # ======================================================
+
+        if analyzer_result.get(
+            "error"
+        ):
+
+            result[
+                "analyzer_error"
+            ] = analyzer_result.get(
+                "error"
+            )
 
         # ======================================================
         # LOG FINAL
@@ -660,13 +708,29 @@ class Pipeline:
 
         info(
             "Pipeline concluído: "
-            f"{total_events} eventos, "
-            f"{total_records} registros, "
-            f"{total_analyses} análises e "
-            f"{total_value_bets} Value Bets."
+            f"{len(raw_events)} eventos brutos, "
+            f"{len(clean_events)} eventos limpos, "
+            f"{len(analyses)} análises, "
+            f"{len(value_bets)} Value Bets."
         )
 
         return result
+
+    # ==========================================================
+    # ATALHO
+    # ==========================================================
+
+    def run(
+        self,
+        force_refresh: bool = False,
+    ) -> Dict[str, Any]:
+        """
+        Alias de execute().
+        """
+
+        return self.execute(
+            force_refresh=force_refresh
+        )
 
 
 # ==========================================================
